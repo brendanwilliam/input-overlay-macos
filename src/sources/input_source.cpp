@@ -118,9 +118,26 @@ public:
         m_enabled = obs_data_get_bool(settings, S_PROCEDURAL_ENABLED);
         m_shape = static_cast<int>(obs_data_get_int(settings, S_PROCEDURAL_SHAPE));
         m_key_size = static_cast<int>(obs_data_get_int(settings, S_PROCEDURAL_KEY_SIZE));
+        if (!obs_data_has_user_value(settings, S_PROCEDURAL_KEY_WIDTH) &&
+            obs_data_has_user_value(settings, S_PROCEDURAL_KEY_SIZE))
+            obs_data_set_int(settings, S_PROCEDURAL_KEY_WIDTH, m_key_size);
+        if (!obs_data_has_user_value(settings, S_PROCEDURAL_KEY_HEIGHT) &&
+            obs_data_has_user_value(settings, S_PROCEDURAL_KEY_SIZE))
+            obs_data_set_int(settings, S_PROCEDURAL_KEY_HEIGHT, m_key_size);
+        m_key_width = static_cast<int>(obs_data_get_int(settings, S_PROCEDURAL_KEY_WIDTH));
+        m_key_height = static_cast<int>(obs_data_get_int(settings, S_PROCEDURAL_KEY_HEIGHT));
         m_gap = static_cast<int>(obs_data_get_int(settings, S_PROCEDURAL_GAP));
         m_radius = static_cast<int>(obs_data_get_int(settings, S_PROCEDURAL_RADIUS));
         m_font_size = static_cast<int>(obs_data_get_int(settings, S_PROCEDURAL_FONT_SIZE));
+        if (auto *font = obs_data_get_obj(settings, S_PROCEDURAL_FONT)) {
+            m_font_family = QString::fromUtf8(obs_data_get_string(font, "face"));
+            m_font_style = QString::fromUtf8(obs_data_get_string(font, "style"));
+            m_font_flags = static_cast<uint32_t>(obs_data_get_int(font, "flags"));
+            m_has_font_selection = true;
+            obs_data_release(font);
+        } else {
+            m_has_font_selection = false;
+        }
         m_fill = color_from_obs(static_cast<uint32_t>(obs_data_get_int(settings, S_PROCEDURAL_FILL_COLOR)));
         m_pressed = color_from_obs(static_cast<uint32_t>(obs_data_get_int(settings, S_PROCEDURAL_PRESSED_COLOR)));
         m_border = color_from_obs(static_cast<uint32_t>(obs_data_get_int(settings, S_PROCEDURAL_BORDER_COLOR)));
@@ -129,8 +146,8 @@ public:
     }
 
     bool enabled() const { return m_enabled; }
-    uint32_t width() const { return static_cast<uint32_t>(m_columns * m_key_size + (m_columns - 1) * m_gap); }
-    uint32_t height() const { return static_cast<uint32_t>(m_rows * m_key_size + (m_rows - 1) * m_gap); }
+    uint32_t width() const { return static_cast<uint32_t>(m_columns * m_key_width + (m_columns - 1) * m_gap); }
+    uint32_t height() const { return static_cast<uint32_t>(m_rows * m_key_height + (m_rows - 1) * m_gap); }
 
     void draw(gs_effect_t *effect, const overlay_settings &settings)
     {
@@ -167,56 +184,62 @@ private:
     static uint16_t keycode_for_token(const QString &token)
     {
         const QString key = token.toUpper();
-        if (key == "W")
-            return VC_W;
-        if (key == "A")
-            return VC_A;
-        if (key == "S")
-            return VC_S;
-        if (key == "D")
-            return VC_D;
-        if (key == "Q")
-            return VC_Q;
-        if (key == "E")
-            return VC_E;
-        if (key == "R")
-            return VC_R;
-        if (key == "F")
-            return VC_F;
-        if (key == "1")
-            return VC_1;
-        if (key == "2")
-            return VC_2;
-        if (key == "3")
-            return VC_3;
-        if (key == "4")
-            return VC_4;
-        if (key == "5")
-            return VC_5;
-        if (key == "6")
-            return VC_6;
-        if (key == "7")
-            return VC_7;
-        if (key == "8")
-            return VC_8;
-        if (key == "9")
-            return VC_9;
-        if (key == "0")
-            return VC_0;
+        if (key.size() == 1 && key[0].isLetter())
+            return static_cast<uint16_t>(VC_A + key[0].unicode() - QChar('A').unicode());
+        if (key.size() == 1 && key[0].isDigit())
+            return static_cast<uint16_t>(VC_0 + key[0].unicode() - QChar('0').unicode());
+
+        if (key.size() >= 2 && key[0] == 'F') {
+            bool valid = false;
+            const int number = key.mid(1).toInt(&valid);
+            if (valid && number >= 1 && number <= 12)
+                return static_cast<uint16_t>(VC_F1 + number - 1);
+            if (valid && number >= 13 && number <= 24)
+                return static_cast<uint16_t>(VC_F13 + number - 13);
+        }
+
         if (key == "SPACE")
             return VC_SPACE;
-        if (key == "SHIFT")
+        if (key == "SHIFT" || key == "LSHIFT")
             return VC_SHIFT_L;
-        if (key == "CTRL" || key == "CONTROL")
+        if (key == "RSHIFT")
+            return VC_SHIFT_R;
+        if (key == "CTRL" || key == "CONTROL" || key == "LCTRL" || key == "LCONTROL")
             return VC_CONTROL_L;
-        if (key == "ALT")
+        if (key == "RCTRL" || key == "RCONTROL")
+            return VC_CONTROL_R;
+        if (key == "ALT" || key == "OPTION" || key == "OPT" || key == "LALT" || key == "LOPTION")
             return VC_ALT_L;
+        if (key == "RALT" || key == "ROPTION")
+            return VC_ALT_R;
+        if (key == "COMMAND" || key == "CMD" || key == "META" || key == "LCOMMAND" || key == "LCMD")
+            return VC_META_L;
+        if (key == "RCOMMAND" || key == "RCMD")
+            return VC_META_R;
+        if (key == "FN" || key == "FUNCTION")
+            return VC_FUNCTION;
+        if (key == "CAPS" || key == "CAPSLOCK")
+            return VC_CAPS_LOCK;
         if (key == "TAB")
             return VC_TAB;
-        if (key == "ENTER")
+        if (key == "ENTER" || key == "RETURN")
             return VC_ENTER;
         if (key == "ESC" || key == "ESCAPE")
             return VC_ESCAPE;
+        if (key == "BACKSPACE" || key == "BKSP")
+            return VC_BACKSPACE;
+        if (key == "DELETE" || key == "FORWARDDELETE")
+            return VC_DELETE;
+        if (key == "INSERT")
+            return VC_INSERT;
+        if (key == "HOME")
+            return VC_HOME;
+        if (key == "END")
+            return VC_END;
+        if (key == "PAGEUP" || key == "PGUP")
+            return VC_PAGE_UP;
+        if (key == "PAGEDOWN" || key == "PGDN")
+            return VC_PAGE_DOWN;
         if (key == "UP" || key == "↑")
             return VC_UP;
         if (key == "DOWN" || key == "↓")
@@ -225,6 +248,36 @@ private:
             return VC_LEFT;
         if (key == "RIGHT" || key == "→")
             return VC_RIGHT;
+        if (key == "BACKTICK" || key == "GRAVE")
+            return VC_BACK_QUOTE;
+        if (key == "MINUS" || key == "-")
+            return VC_MINUS;
+        if (key == "EQUALS" || key == "=")
+            return VC_EQUALS;
+        if (key == "OPENBRACKET" || key == "[")
+            return VC_OPEN_BRACKET;
+        if (key == "CLOSEBRACKET" || key == "]")
+            return VC_CLOSE_BRACKET;
+        if (key == "BACKSLASH" || key == "\\")
+            return VC_BACK_SLASH;
+        if (key == "SEMICOLON" || key == ";")
+            return VC_SEMICOLON;
+        if (key == "QUOTE" || key == "'")
+            return VC_QUOTE;
+        if (key == "COMMA" || key == ",")
+            return VC_COMMA;
+        if (key == "PERIOD" || key == ".")
+            return VC_PERIOD;
+        if (key == "SLASH" || key == "/")
+            return VC_SLASH;
+        if (key == "PRINTSCREEN" || key == "PRTSC")
+            return VC_PRINT_SCREEN;
+        if (key == "SCROLLLOCK")
+            return VC_SCROLL_LOCK;
+        if (key == "PAUSE")
+            return VC_PAUSE;
+        if (key == "NUMLOCK")
+            return VC_NUM_LOCK;
         return VC_UNDEFINED;
     }
 
@@ -249,9 +302,11 @@ private:
                 if (token == " " || token == "_")
                     continue;
 
-                const uint16_t code = keycode_for_token(token);
+                const QStringList parts = token.split('|');
+                const uint16_t code = keycode_for_token(parts[0].trimmed());
                 if (code != VC_UNDEFINED)
-                    m_keys.push_back({token.toUpper(), code, column, row});
+                    m_keys.push_back({parts.size() > 1 ? parts.mid(1).join("|").trimmed() : parts[0].toUpper(), code,
+                                      column, row});
             }
             m_columns = std::max(m_columns, column);
         }
@@ -265,16 +320,26 @@ private:
         QPainter painter(&m_image);
         painter.setRenderHint(QPainter::Antialiasing);
         QFont font = painter.font();
-        font.setPixelSize(std::min(m_font_size, m_key_size - 12));
-        font.setBold(true);
+        if (m_has_font_selection) {
+            font.setFamily(m_font_family);
+            font.setStyleName(m_font_style);
+            font.setBold(m_font_flags & OBS_FONT_BOLD);
+            font.setItalic(m_font_flags & OBS_FONT_ITALIC);
+            font.setUnderline(m_font_flags & OBS_FONT_UNDERLINE);
+            font.setStrikeOut(m_font_flags & OBS_FONT_STRIKEOUT);
+        } else {
+            font.setBold(true);
+        }
+        font.setPixelSize(std::min(m_font_size, std::min(m_key_width, m_key_height) - 12));
         painter.setFont(font);
         painter.setPen(QPen(m_border, 2));
 
         for (const auto &key : m_keys) {
-            const QRect rect(key.column * (m_key_size + m_gap), key.row * (m_key_size + m_gap), m_key_size, m_key_size);
+            const QRect rect(key.column * (m_key_width + m_gap), key.row * (m_key_height + m_gap), m_key_width,
+                             m_key_height);
             const auto pressed = settings.data.keyboard.find(key.code);
             painter.setBrush(pressed != settings.data.keyboard.end() && pressed->second ? m_pressed : m_fill);
-            const int radius = m_shape == 0 ? 0 : (m_shape == 2 ? m_key_size / 2 : m_radius);
+            const int radius = m_shape == 0 ? 0 : (m_shape == 2 ? std::min(m_key_width, m_key_height) / 2 : m_radius);
             painter.drawRoundedRect(rect.adjusted(1, 1, -1, -1), radius, radius);
             painter.setPen(m_text);
             QFont key_font = font;
@@ -290,9 +355,15 @@ private:
     bool m_enabled = false;
     int m_shape = 1;
     int m_key_size = 80;
+    int m_key_width = 80;
+    int m_key_height = 80;
     int m_gap = 8;
     int m_radius = 12;
     int m_font_size = 28;
+    QString m_font_family;
+    QString m_font_style;
+    uint32_t m_font_flags = 0;
+    bool m_has_font_selection = false;
     QColor m_fill = QColor(35, 41, 57);
     QColor m_pressed = QColor(37, 99, 235);
     QColor m_border = QColor(148, 163, 184);
@@ -521,9 +592,11 @@ obs_properties_t *get_properties_for_overlay(void *data)
     obs_property_list_add_int(shape, T_PROCEDURAL_SHAPE_RECTANGLE, 0);
     obs_property_list_add_int(shape, T_PROCEDURAL_SHAPE_ROUNDED, 1);
     obs_property_list_add_int(shape, T_PROCEDURAL_SHAPE_PILL, 2);
-    obs_properties_add_int_slider(props, S_PROCEDURAL_KEY_SIZE, T_PROCEDURAL_KEY_SIZE, 32, 200, 1);
+    obs_properties_add_int_slider(props, S_PROCEDURAL_KEY_WIDTH, T_PROCEDURAL_KEY_WIDTH, 32, 300, 1);
+    obs_properties_add_int_slider(props, S_PROCEDURAL_KEY_HEIGHT, T_PROCEDURAL_KEY_HEIGHT, 32, 300, 1);
     obs_properties_add_int_slider(props, S_PROCEDURAL_GAP, T_PROCEDURAL_GAP, 0, 40, 1);
     obs_properties_add_int_slider(props, S_PROCEDURAL_RADIUS, T_PROCEDURAL_RADIUS, 0, 80, 1);
+    obs_properties_add_font(props, S_PROCEDURAL_FONT, T_PROCEDURAL_FONT);
     obs_properties_add_int_slider(props, S_PROCEDURAL_FONT_SIZE, T_PROCEDURAL_FONT_SIZE, 10, 96, 1);
     obs_properties_add_color(props, S_PROCEDURAL_FILL_COLOR, T_PROCEDURAL_FILL_COLOR);
     obs_properties_add_color(props, S_PROCEDURAL_PRESSED_COLOR, T_PROCEDURAL_PRESSED_COLOR);
@@ -606,6 +679,8 @@ void register_overlay_source()
         obs_data_set_default_bool(settings, S_PROCEDURAL_ENABLED, false);
         obs_data_set_default_int(settings, S_PROCEDURAL_SHAPE, 1);
         obs_data_set_default_int(settings, S_PROCEDURAL_KEY_SIZE, 80);
+        obs_data_set_default_int(settings, S_PROCEDURAL_KEY_WIDTH, 80);
+        obs_data_set_default_int(settings, S_PROCEDURAL_KEY_HEIGHT, 80);
         obs_data_set_default_int(settings, S_PROCEDURAL_GAP, 8);
         obs_data_set_default_int(settings, S_PROCEDURAL_RADIUS, 12);
         obs_data_set_default_int(settings, S_PROCEDURAL_FONT_SIZE, 28);

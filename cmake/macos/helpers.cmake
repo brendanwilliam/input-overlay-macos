@@ -61,6 +61,11 @@ function(set_target_properties_plugin target)
   install(TARGETS ${target} LIBRARY DESTINATION .)
   install(FILES "$<TARGET_BUNDLE_DIR:${target}>.dsym" CONFIGURATIONS Release DESTINATION . OPTIONAL)
 
+  # OBS does not ship SDL3, so place the shared library next to the plugin executable.
+  if(TARGET SDL3::SDL3)
+    install(FILES "$<TARGET_FILE:SDL3::SDL3>" DESTINATION "${target}.plugin/Contents/Frameworks")
+  endif()
+
   # OBS is signed with the hardened runtime and will not load an unsigned local plugin.
   # Sign after CMake has installed all bundle resources and before creating the local package.
   set(local_plugin_path "\$ENV{DESTDIR}${CMAKE_INSTALL_PREFIX}/${target}.plugin")

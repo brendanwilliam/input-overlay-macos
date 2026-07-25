@@ -30,6 +30,7 @@
 /* Lang Input Overlay */
 #define T_TEXTURE_FILE                  T_("Overlay.Path.Texture")
 #define T_LAYOUT_FILE                   T_("Overlay.Path.Layout")
+#define T_BUNDLED_PRESET                T_("Overlay.Preset")
 #define T_LINEAR_ALPHA                  T_("Overlay.LinearAlpha")
 #define T_FILTER_IMAGE_FILES            T_("Filter.ImageFiles")
 #define T_FILTER_TEXT_FILES             T_("Filter.TextFiles")

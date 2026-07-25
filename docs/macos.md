@@ -52,6 +52,12 @@ signed for distribution.
 Restart OBS and follow the Accessibility steps above. The first configure can take a while because it downloads and
 builds the OBS development dependencies.
 
+## Add an overlay in OBS
+
+Add an **Input Overlay** source to a scene, then open its properties. Use the **Built-in preset** dropdown to select a
+keyboard, mouse, or controller layout; it automatically applies the matching texture and layout files. The file fields
+remain available for custom layouts.
+
 To remove a source or release installation, quit OBS and delete:
 
 ```text

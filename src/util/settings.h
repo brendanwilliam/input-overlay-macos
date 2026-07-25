@@ -44,6 +44,7 @@
 /* overlay source */
 #define S_OVERLAY_FILE                  "io.overlay_image"
 #define S_LAYOUT_FILE                   "io.layout_file"
+#define S_BUNDLED_PRESET                "io.bundled_preset"
 #define S_CONTROLLER_ID                 "io.controller_id"
 #define S_CONTROLLER_L_DEAD_ZONE        "io.controller_l_deadzone"
 #define S_CONTROLLER_R_DEAD_ZONE        "io.controller_r_deadzone"

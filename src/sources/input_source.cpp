@@ -27,7 +27,67 @@
 #include <QFile>
 #include <obs-frontend-api.h>
 
+#include <cstring>
+
 namespace sources {
+namespace {
+struct bundled_preset {
+    const char *name;
+    const char *id;
+    const char *layout;
+    const char *texture;
+};
+
+constexpr bundled_preset bundled_presets[] = {
+    {"WASD full keyboard", "wasd-full", "wasd/wasd-full.json", "wasd/wasd.png"},
+    {"WASD + arrow keys", "wasd-arrow-keys", "wasd/wasd-plus-arrow-keys.json", "wasd/wasd-plus-arrow-keys.png"},
+    {"WASD minimal", "wasd-minimal", "wasd/wasd-minimal.json", "wasd/wasd.png"},
+    {"QWERTY keyboard", "qwerty", "qwerty/qwerty.json", "qwerty/qwerty.png"},
+    {"QWERTY + arrow keys", "qwerty-arrow-keys", "qwerty_arrow_keys/qwerty_arrow_keys.json",
+     "qwerty_arrow_keys/qwerty_arrow_keys.png"},
+    {"Mouse", "mouse", "mouse/mouse-dot.json", "mouse/mouse.png"},
+    {"Xbox controller", "xbox-controller", "xbox-controller/xbox-controller.json",
+     "xbox-controller/xbox-controller.png"},
+    {"DualSense controller", "dualsense", "dualsense/dualsense.json", "dualsense/dualsense.png"},
+};
+
+const bundled_preset *find_bundled_preset(const char *id)
+{
+    for (const auto &preset : bundled_presets) {
+        if (strcmp(preset.id, id) == 0)
+            return &preset;
+    }
+    return nullptr;
+}
+
+std::string bundled_preset_path(const char *relative_path)
+{
+    const std::string resource_path = std::string("presets/") + relative_path;
+    char *path = obs_module_file(resource_path.c_str());
+    if (!path)
+        return {};
+    std::string result(path);
+    bfree(path);
+    return result;
+}
+
+bool preset_changed(void *d, obs_properties_t *props, obs_property_t *, obs_data_t *data)
+{
+    const auto *preset = find_bundled_preset(obs_data_get_string(data, S_BUNDLED_PRESET));
+    if (!preset)
+        return false;
+
+    const std::string layout_path = bundled_preset_path(preset->layout);
+    const std::string texture_path = bundled_preset_path(preset->texture);
+    if (layout_path.empty() || texture_path.empty())
+        return false;
+
+    obs_data_set_string(data, S_LAYOUT_FILE, layout_path.c_str());
+    obs_data_set_string(data, S_OVERLAY_FILE, texture_path.c_str());
+    return file_changed(d, props, nullptr, data);
+}
+} // namespace
+
 bool overlay_settings::use_local_input()
 {
     return selected_source.empty() || selected_source == T_LOCAL_SOURCE;
@@ -213,6 +273,13 @@ obs_properties_t *get_properties_for_overlay(void *data)
 
     const auto filter_img = util_file_filter(T_FILTER_IMAGE_FILES, "*.jpg *.png *.bmp");
     const auto filter_text = util_file_filter(T_FILTER_TEXT_FILES, "*.json");
+
+    auto *preset = obs_properties_add_list(props, S_BUNDLED_PRESET, T_BUNDLED_PRESET, OBS_COMBO_TYPE_LIST,
+                                           OBS_COMBO_FORMAT_STRING);
+    obs_property_list_add_string(preset, "Custom files", "");
+    for (const auto &entry : bundled_presets)
+        obs_property_list_add_string(preset, entry.name, entry.id);
+    obs_property_set_modified_callback2(preset, preset_changed, data);
 
     /* Config and texture file path */
     auto *texture = obs_properties_add_path(props, S_OVERLAY_FILE, T_TEXTURE_FILE, OBS_PATH_FILE,

@@ -99,6 +99,25 @@ function(target_install_resources target)
       source_group("Resources/${relative_path}" FILES "${data_file}")
     endforeach()
   endif()
+
+  if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/presets")
+    file(GLOB_RECURSE preset_files "${CMAKE_CURRENT_SOURCE_DIR}/presets/*")
+    foreach(preset_file IN LISTS preset_files)
+      if(IS_DIRECTORY "${preset_file}")
+        continue()
+      endif()
+      cmake_path(
+        RELATIVE_PATH
+        preset_file
+        BASE_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/presets/"
+        OUTPUT_VARIABLE relative_path
+      )
+      cmake_path(GET relative_path PARENT_PATH relative_path)
+      target_sources(${target} PRIVATE "${preset_file}")
+      set_property(SOURCE "${preset_file}" PROPERTY MACOSX_PACKAGE_LOCATION "Resources/presets/${relative_path}")
+      source_group("Resources/presets/${relative_path}" FILES "${preset_file}")
+    endforeach()
+  endif()
 endfunction()
 
 # target_add_resource: Helper function to add a specific resource to a bundle

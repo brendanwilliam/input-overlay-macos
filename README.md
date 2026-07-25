@@ -13,9 +13,8 @@ release, then restart OBS. To capture local keyboard and mouse input, enable **O
 & Security → Accessibility**, then restart OBS. The standalone `io_client` is distributed as a separate universal
 archive for trusted local-network forwarding.
 
-To build locally, install Xcode and Homebrew, initialize dependencies with `git submodule update --init --recursive`,
-then run `cmake --preset macos && cmake --build --preset macos`. Install the resulting bundle with
-`cmake --install build_macos --config Release`.
+See the [macOS installation guide](docs/macos.md) for release installation, local builds, permissions, and
+troubleshooting.
 
 ## [Wiki](https://github.com/univrsal/input-overlay/wiki)
 ## [Installation](https://github.com/univrsal/input-overlay/wiki/Installation)

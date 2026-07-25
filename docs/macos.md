@@ -70,6 +70,13 @@ after `|` is shown while the key still responds to the name before it. Letters, 
 navigation keys, and common punctuation are supported. This mode uses the local Input Overlay hook and requires the
 Accessibility permission above.
 
+### Procedural mouse style
+
+Add a second **Input Overlay** source and enable **Use procedural mouse overlay** to create a file-free mouse input
+display. Configure its width, height, button gap, corner radius, font and font size, colors, and the labels for left,
+right, and middle click (for example, `Fire`, `Aim`, and `Ping`). The corresponding button changes to the pressed color
+while it is held. Use a separate source when showing both the procedural keyboard and mouse.
+
 To remove a source or release installation, quit OBS and delete:
 
 ```text

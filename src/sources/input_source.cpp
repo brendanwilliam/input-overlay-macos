@@ -377,6 +377,150 @@ private:
     uint32_t m_texture_height = 0;
 };
 
+class procedural_mouse {
+public:
+    ~procedural_mouse()
+    {
+        if (m_texture) {
+            obs_enter_graphics();
+            gs_texture_destroy(m_texture);
+            obs_leave_graphics();
+        }
+    }
+
+    void update(obs_data_t *settings)
+    {
+        m_enabled = obs_data_get_bool(settings, S_PROCEDURAL_MOUSE_ENABLED);
+        m_width = static_cast<int>(obs_data_get_int(settings, S_PROCEDURAL_MOUSE_WIDTH));
+        m_height = static_cast<int>(obs_data_get_int(settings, S_PROCEDURAL_MOUSE_HEIGHT));
+        m_gap = static_cast<int>(obs_data_get_int(settings, S_PROCEDURAL_MOUSE_GAP));
+        m_radius = static_cast<int>(obs_data_get_int(settings, S_PROCEDURAL_MOUSE_RADIUS));
+        m_font_size = static_cast<int>(obs_data_get_int(settings, S_PROCEDURAL_MOUSE_FONT_SIZE));
+        if (auto *font = obs_data_get_obj(settings, S_PROCEDURAL_MOUSE_FONT)) {
+            m_font_family = QString::fromUtf8(obs_data_get_string(font, "face"));
+            m_font_style = QString::fromUtf8(obs_data_get_string(font, "style"));
+            m_font_flags = static_cast<uint32_t>(obs_data_get_int(font, "flags"));
+            m_has_font_selection = true;
+            obs_data_release(font);
+        } else {
+            m_has_font_selection = false;
+        }
+        m_fill = color_from_obs(static_cast<uint32_t>(obs_data_get_int(settings, S_PROCEDURAL_MOUSE_FILL_COLOR)));
+        m_pressed =
+            color_from_obs(static_cast<uint32_t>(obs_data_get_int(settings, S_PROCEDURAL_MOUSE_PRESSED_COLOR)));
+        m_border = color_from_obs(static_cast<uint32_t>(obs_data_get_int(settings, S_PROCEDURAL_MOUSE_BORDER_COLOR)));
+        m_text = color_from_obs(static_cast<uint32_t>(obs_data_get_int(settings, S_PROCEDURAL_MOUSE_TEXT_COLOR)));
+        m_left_label = QString::fromUtf8(obs_data_get_string(settings, S_PROCEDURAL_MOUSE_LEFT_LABEL));
+        m_right_label = QString::fromUtf8(obs_data_get_string(settings, S_PROCEDURAL_MOUSE_RIGHT_LABEL));
+        m_middle_label = QString::fromUtf8(obs_data_get_string(settings, S_PROCEDURAL_MOUSE_MIDDLE_LABEL));
+    }
+
+    bool enabled() const { return m_enabled; }
+    uint32_t width() const { return static_cast<uint32_t>(m_width); }
+    uint32_t height() const { return static_cast<uint32_t>(m_height); }
+
+    void draw(gs_effect_t *effect, const overlay_settings &settings)
+    {
+        render_image(settings);
+        if (m_texture && (m_texture_width != width() || m_texture_height != height())) {
+            gs_texture_destroy(m_texture);
+            m_texture = nullptr;
+        }
+        if (!m_texture) {
+            m_texture = gs_texture_create(width(), height(), GS_RGBA, 1, nullptr, GS_DYNAMIC);
+            m_texture_width = width();
+            m_texture_height = height();
+        }
+        if (!m_texture)
+            return;
+
+        gs_texture_set_image(m_texture, m_image.constBits(), static_cast<uint32_t>(m_image.bytesPerLine()), false);
+        gs_blend_state_push();
+        gs_enable_blending(true);
+        gs_blend_function(GS_BLEND_ONE, GS_BLEND_INVSRCALPHA);
+        gs_effect_set_texture(gs_effect_get_param_by_name(effect, "image"), m_texture);
+        gs_draw_sprite(m_texture, 0, width(), height());
+        gs_blend_state_pop();
+    }
+
+private:
+    static bool mouse_pressed(const overlay_settings &settings, uint16_t button)
+    {
+        const auto pressed = settings.data.mouse.find(button);
+        return pressed != settings.data.mouse.end() && pressed->second;
+    }
+
+    void draw_button(QPainter &painter, const QRect &rect, const QString &label, bool pressed, const QFont &font) const
+    {
+        painter.setBrush(pressed ? m_pressed : m_fill);
+        painter.setPen(QPen(m_border, 2));
+        painter.drawRoundedRect(rect.adjusted(1, 1, -1, -1), std::min(m_radius, std::min(rect.width(), rect.height()) / 2),
+                                std::min(m_radius, std::min(rect.width(), rect.height()) / 2));
+
+        QFont button_font = font;
+        while (button_font.pixelSize() > 8 && QFontMetrics(button_font).horizontalAdvance(label) > rect.width() - 12)
+            button_font.setPixelSize(button_font.pixelSize() - 1);
+        painter.setFont(button_font);
+        painter.setPen(m_text);
+        painter.drawText(rect, Qt::AlignCenter, label);
+    }
+
+    void render_image(const overlay_settings &settings)
+    {
+        m_image = QImage(m_width, m_height, QImage::Format_RGBA8888);
+        m_image.fill(Qt::transparent);
+
+        QPainter painter(&m_image);
+        painter.setRenderHint(QPainter::Antialiasing);
+        QFont font = painter.font();
+        if (m_has_font_selection) {
+            font.setFamily(m_font_family);
+            font.setStyleName(m_font_style);
+            font.setBold(m_font_flags & OBS_FONT_BOLD);
+            font.setItalic(m_font_flags & OBS_FONT_ITALIC);
+            font.setUnderline(m_font_flags & OBS_FONT_UNDERLINE);
+            font.setStrikeOut(m_font_flags & OBS_FONT_STRIKEOUT);
+        } else {
+            font.setBold(true);
+        }
+        font.setPixelSize(std::min(m_font_size, std::min(m_width, m_height) / 4));
+
+        const int top_height = std::max(m_height / 2, m_gap * 2 + 1);
+        const int button_width = std::max((m_width - 3 * m_gap) / 2, 1);
+        const QRect left(m_gap, m_gap, button_width, top_height - 2 * m_gap);
+        const QRect right(m_gap * 2 + button_width, m_gap, button_width, top_height - 2 * m_gap);
+        const int middle_width = std::max(m_width / 3, 1);
+        const int middle_height = std::max(m_height - top_height - 2 * m_gap, 1);
+        const QRect middle((m_width - middle_width) / 2, top_height + m_gap, middle_width, middle_height);
+
+        draw_button(painter, left, m_left_label, mouse_pressed(settings, MOUSE_BUTTON1), font);
+        draw_button(painter, right, m_right_label, mouse_pressed(settings, MOUSE_BUTTON2), font);
+        draw_button(painter, middle, m_middle_label, mouse_pressed(settings, MOUSE_BUTTON3), font);
+    }
+
+    bool m_enabled = false;
+    int m_width = 220;
+    int m_height = 300;
+    int m_gap = 8;
+    int m_radius = 16;
+    int m_font_size = 24;
+    QString m_font_family;
+    QString m_font_style;
+    uint32_t m_font_flags = 0;
+    bool m_has_font_selection = false;
+    QColor m_fill = QColor(35, 41, 57);
+    QColor m_pressed = QColor(37, 99, 235);
+    QColor m_border = QColor(148, 163, 184);
+    QColor m_text = QColor(255, 255, 255);
+    QString m_left_label = "LMB";
+    QString m_right_label = "RMB";
+    QString m_middle_label = "MMB";
+    QImage m_image;
+    gs_texture_t *m_texture = nullptr;
+    uint32_t m_texture_width = 0;
+    uint32_t m_texture_height = 0;
+};
+
 bool overlay_settings::use_local_input()
 {
     return selected_source.empty() || selected_source == T_LOCAL_SOURCE;
@@ -386,6 +530,7 @@ input_source::input_source(obs_source_t *source, obs_data_t *settings) : m_sourc
 {
     m_overlay = std::make_unique<overlay>(&m_settings);
     m_procedural_keyboard = std::make_unique<procedural_keyboard>();
+    m_procedural_mouse = std::make_unique<procedural_mouse>();
     obs_source_update(m_source, settings);
     m_settings.image_file = obs_data_get_string(settings, S_OVERLAY_FILE);
     m_settings.layout_file = obs_data_get_string(settings, S_LAYOUT_FILE);
@@ -405,7 +550,11 @@ input_source::~input_source() = default;
 inline void input_source::update(obs_data_t *settings)
 {
     m_procedural_keyboard->update(settings);
-    if (m_procedural_keyboard->enabled()) {
+    m_procedural_mouse->update(settings);
+    if (m_procedural_mouse->enabled()) {
+        m_settings.cx = m_procedural_mouse->width();
+        m_settings.cy = m_procedural_mouse->height();
+    } else if (m_procedural_keyboard->enabled()) {
         m_settings.cx = m_procedural_keyboard->width();
         m_settings.cy = m_procedural_keyboard->height();
     }
@@ -434,7 +583,7 @@ inline void input_source::update(obs_data_t *settings)
 
 inline void input_source::tick(float seconds)
 {
-    if (m_procedural_keyboard->enabled())
+    if (m_procedural_keyboard->enabled() || m_procedural_mouse->enabled())
         m_overlay->refresh_data();
 
     if (m_overlay->is_loaded()) {
@@ -463,6 +612,11 @@ inline void input_source::tick(float seconds)
 
 inline void input_source::render(gs_effect_t *effect)
 {
+    if (m_procedural_mouse->enabled()) {
+        m_procedural_mouse->draw(effect, m_settings);
+        return;
+    }
+
     if (m_procedural_keyboard->enabled()) {
         m_procedural_keyboard->draw(effect, m_settings);
         return;
@@ -604,6 +758,21 @@ obs_properties_t *get_properties_for_overlay(void *data)
     obs_properties_add_color(props, S_PROCEDURAL_TEXT_COLOR, T_PROCEDURAL_TEXT_COLOR);
     obs_properties_add_text(props, S_PROCEDURAL_LAYOUT, T_PROCEDURAL_LAYOUT, OBS_TEXT_MULTILINE);
 
+    obs_properties_add_bool(props, S_PROCEDURAL_MOUSE_ENABLED, T_PROCEDURAL_MOUSE_ENABLED);
+    obs_properties_add_int_slider(props, S_PROCEDURAL_MOUSE_WIDTH, T_PROCEDURAL_MOUSE_WIDTH, 100, 600, 1);
+    obs_properties_add_int_slider(props, S_PROCEDURAL_MOUSE_HEIGHT, T_PROCEDURAL_MOUSE_HEIGHT, 120, 800, 1);
+    obs_properties_add_int_slider(props, S_PROCEDURAL_MOUSE_GAP, T_PROCEDURAL_MOUSE_GAP, 0, 40, 1);
+    obs_properties_add_int_slider(props, S_PROCEDURAL_MOUSE_RADIUS, T_PROCEDURAL_MOUSE_RADIUS, 0, 100, 1);
+    obs_properties_add_font(props, S_PROCEDURAL_MOUSE_FONT, T_PROCEDURAL_MOUSE_FONT);
+    obs_properties_add_int_slider(props, S_PROCEDURAL_MOUSE_FONT_SIZE, T_PROCEDURAL_MOUSE_FONT_SIZE, 10, 96, 1);
+    obs_properties_add_color(props, S_PROCEDURAL_MOUSE_FILL_COLOR, T_PROCEDURAL_MOUSE_FILL_COLOR);
+    obs_properties_add_color(props, S_PROCEDURAL_MOUSE_PRESSED_COLOR, T_PROCEDURAL_MOUSE_PRESSED_COLOR);
+    obs_properties_add_color(props, S_PROCEDURAL_MOUSE_BORDER_COLOR, T_PROCEDURAL_MOUSE_BORDER_COLOR);
+    obs_properties_add_color(props, S_PROCEDURAL_MOUSE_TEXT_COLOR, T_PROCEDURAL_MOUSE_TEXT_COLOR);
+    obs_properties_add_text(props, S_PROCEDURAL_MOUSE_LEFT_LABEL, T_PROCEDURAL_MOUSE_LEFT_LABEL, OBS_TEXT_DEFAULT);
+    obs_properties_add_text(props, S_PROCEDURAL_MOUSE_RIGHT_LABEL, T_PROCEDURAL_MOUSE_RIGHT_LABEL, OBS_TEXT_DEFAULT);
+    obs_properties_add_text(props, S_PROCEDURAL_MOUSE_MIDDLE_LABEL, T_PROCEDURAL_MOUSE_MIDDLE_LABEL, OBS_TEXT_DEFAULT);
+
     /* Config and texture file path */
     auto *texture = obs_properties_add_path(props, S_OVERLAY_FILE, T_TEXTURE_FILE, OBS_PATH_FILE,
                                             qt_to_utf8(filter_img), qt_to_utf8(img_path));
@@ -689,6 +858,19 @@ void register_overlay_source()
         obs_data_set_default_int(settings, S_PROCEDURAL_BORDER_COLOR, 0xB8A394);
         obs_data_set_default_int(settings, S_PROCEDURAL_TEXT_COLOR, 0xFFFFFF);
         obs_data_set_default_string(settings, S_PROCEDURAL_LAYOUT, " W     \nASD[LEFT][DOWN][RIGHT]");
+        obs_data_set_default_bool(settings, S_PROCEDURAL_MOUSE_ENABLED, false);
+        obs_data_set_default_int(settings, S_PROCEDURAL_MOUSE_WIDTH, 220);
+        obs_data_set_default_int(settings, S_PROCEDURAL_MOUSE_HEIGHT, 300);
+        obs_data_set_default_int(settings, S_PROCEDURAL_MOUSE_GAP, 8);
+        obs_data_set_default_int(settings, S_PROCEDURAL_MOUSE_RADIUS, 16);
+        obs_data_set_default_int(settings, S_PROCEDURAL_MOUSE_FONT_SIZE, 24);
+        obs_data_set_default_int(settings, S_PROCEDURAL_MOUSE_FILL_COLOR, 0x392923);
+        obs_data_set_default_int(settings, S_PROCEDURAL_MOUSE_PRESSED_COLOR, 0xEB6325);
+        obs_data_set_default_int(settings, S_PROCEDURAL_MOUSE_BORDER_COLOR, 0xB8A394);
+        obs_data_set_default_int(settings, S_PROCEDURAL_MOUSE_TEXT_COLOR, 0xFFFFFF);
+        obs_data_set_default_string(settings, S_PROCEDURAL_MOUSE_LEFT_LABEL, "LMB");
+        obs_data_set_default_string(settings, S_PROCEDURAL_MOUSE_RIGHT_LABEL, "RMB");
+        obs_data_set_default_string(settings, S_PROCEDURAL_MOUSE_MIDDLE_LABEL, "MMB");
         obs_data_set_default_int(settings, S_MOUSE_SENS, 100);
     };
     si.update = [](void *data, obs_data_t *settings) { static_cast<input_source *>(data)->update(settings); };

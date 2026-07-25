@@ -171,5 +171,5 @@ set(CMAKE_COLOR_DIAGNOSTICS TRUE)
 
 # Disable usage of RPATH in build or install configurations
 set(CMAKE_SKIP_RPATH TRUE)
-# Have Xcode set default RPATH entries
-set(CMAKE_XCODE_ATTRIBUTE_LD_RUNPATH_SEARCH_PATHS "@executable_path/../Frameworks")
+# Locate bundled plugin libraries relative to the module and OBS frameworks relative to the host application.
+set(CMAKE_XCODE_ATTRIBUTE_LD_RUNPATH_SEARCH_PATHS "@loader_path/../Frameworks @executable_path/../Frameworks")

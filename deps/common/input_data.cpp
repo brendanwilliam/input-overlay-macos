@@ -33,6 +33,8 @@ void input_data::copy(const input_data *other, bool with_gamepad_data)
     last_wheel_event_time = other->last_wheel_event_time;
     last_wheel_event = other->last_wheel_event;
     last_event_type.store(other->last_event_type);
+    trace_sequence = other->trace_sequence;
+    trace = other->trace;
 
     if (with_gamepad_data) {
         gamepad_axis = other->gamepad_axis;
@@ -42,6 +44,21 @@ void input_data::copy(const input_data *other, bool with_gamepad_data)
 
 void input_data::dispatch_uiohook_event(const uiohook_event *event)
 {
+    trace_event trace_entry{};
+    trace_entry.sequence = ++trace_sequence;
+    trace_entry.time_ns = os_gettime_ns();
+    trace_entry.type = event->type;
+    if (event->type == EVENT_KEY_PRESSED || event->type == EVENT_KEY_RELEASED) {
+        trace_entry.code = event->data.keyboard.keycode;
+        trace_entry.keychar = event->data.keyboard.keychar;
+    } else if (event->type >= EVENT_MOUSE_CLICKED) {
+        trace_entry.code = event->data.mouse.button;
+        trace_entry.x = event->data.mouse.x;
+        trace_entry.y = event->data.mouse.y;
+    }
+    trace.push_back(trace_entry);
+    if (trace.size() > trace_capacity)
+        trace.pop_front();
     if (event->type == EVENT_MOUSE_WHEEL) {
         last_wheel_event = event->data.wheel;
         last_wheel_event_time = os_gettime_ns();
@@ -57,4 +74,19 @@ void input_data::dispatch_uiohook_event(const uiohook_event *event)
         mouse[event->data.mouse.button] = event->type == EVENT_MOUSE_PRESSED;
     }
     last_event_type = event->type;
+}
+
+void input_data::events_after(uint64_t &cursor, std::vector<trace_event> &out) const
+{
+    out.clear();
+    if (trace.empty())
+        return;
+    const uint64_t oldest = trace.front().sequence;
+    if (cursor + 1 < oldest)
+        cursor = oldest - 1;
+    for (const auto &event : trace) {
+        if (event.sequence > cursor)
+            out.push_back(event);
+    }
+    cursor = trace.back().sequence;
 }

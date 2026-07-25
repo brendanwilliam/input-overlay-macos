@@ -177,6 +177,8 @@ target_sources(
     src/input_overlay.cpp
     src/sources/input_source.cpp
     src/sources/input_source.hpp
+    src/sources/activity_sources.cpp
+    src/sources/activity_sources.hpp
     src/sources/input_source.cpp
     src/hook/sdl_gamepad.hpp
     src/hook/sdl_gamepad.cpp

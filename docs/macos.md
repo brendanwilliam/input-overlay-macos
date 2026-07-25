@@ -77,6 +77,21 @@ display. Configure its width, height, button gap, corner radius, font and font s
 right, and middle click (for example, `Fire`, `Aim`, and `Ping`). The corresponding button changes to the pressed color
 while it is held. Use a separate source when showing both the procedural keyboard and mouse.
 
+## Live activity sources
+
+The source picker also includes three independent live sources. Each has its own **Input source** selector, so it can
+show this Mac or an input client connected over the trusted local WebSocket connection.
+
+- **Live Keys** lists held physical keys in press order. Repeated key-down events do not add duplicate rows. Set
+  **Maximum visible keys** to reserve a stable transparent area for the list.
+- **Mouse Activity** shows independent left, right, and middle button states, a three-second cursor trail, and a
+  session heatmap. Select the display whose coordinates should be rendered; motion outside that display is ignored.
+  The heatmap persists until **Clear heatmap** is pressed.
+- **Input Statistics** reports the preceding 60 seconds of distinct key-down events (KPM), left/right/middle
+  button-down events (CPM), and their sum (APM). Scrolling and motion are not actions. Distance is the accumulated
+  distance between captured mouse motion points, measured in screen pixels. Configure **Reset Input Statistics** in
+  OBS Hotkeys; it resets only that source's rates and distance, not a Mouse Activity heatmap.
+
 To remove a source or release installation, quit OBS and delete:
 
 ```text

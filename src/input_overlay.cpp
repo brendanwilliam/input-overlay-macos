@@ -30,6 +30,7 @@
 #include "network/remote_connection.hpp"
 #include "network/websocket_server.hpp"
 #include "sources/input_source.hpp"
+#include "sources/activity_sources.hpp"
 #include "util/config.hpp"
 #include "util/log.h"
 #include "util/lang.h"
@@ -52,6 +53,8 @@ bool obs_module_load()
 
     if (io_config::enable_overlay_source)
         sources::register_overlay_source();
+    if (io_config::enable_overlay_source)
+        sources::register_activity_sources();
 
     std::thread tmp([] {
         if (io_config::enable_gamepad_hook)

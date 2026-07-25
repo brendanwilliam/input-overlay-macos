@@ -104,8 +104,10 @@ io_settings_dialog::io_settings_dialog(QWidget *parent) : QDialog(parent, Qt::Di
     ui->lbl_local_features->setStyleSheet("QLabel { color: red; "
                                           "font-weight: bold;}");
 #if defined(__APPLE__)
-    ui->lbl_local_features->setText(ui->lbl_local_features->text() + "<br>" +
-                                    QString::fromUtf8(obs_module_get_string("Dialog.MacOS.Accessibility")));
+    const char *macos_accessibility =
+        "macOS requires Accessibility permission for OBS to capture keyboard and mouse input.";
+    obs_module_get_string("Dialog.MacOS.Accessibility", &macos_accessibility);
+    ui->lbl_local_features->setText(ui->lbl_local_features->text() + "<br>" + QString::fromUtf8(macos_accessibility));
 #endif
 }
 

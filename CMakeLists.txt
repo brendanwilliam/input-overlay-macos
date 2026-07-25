@@ -85,6 +85,46 @@ target_compile_options(
 )
 set_target_properties(${CMAKE_PROJECT_NAME} PROPERTIES AUTOMOC ON AUTOUIC ON)
 
+# The Qt 6.8.3 uic bundled with OBS deps aborts on Apple Silicon with current macOS/Xcode.
+# Its x86_64 slice runs correctly through Rosetta, so use it only when configuring on an arm64 host.
+if(APPLE)
+  # Xcode 26 passes conflicting deployment-target variables to CMake's optional moc predefines probe.
+  set_property(TARGET ${CMAKE_PROJECT_NAME} PROPERTY AUTOMOC_COMPILER_PREDEFINES OFF)
+
+  execute_process(COMMAND uname -m OUTPUT_VARIABLE QT_HOST_ARCH OUTPUT_STRIP_TRAILING_WHITESPACE)
+  file(GLOB QT_UIC_EXECUTABLE "${CMAKE_SOURCE_DIR}/.deps/obs-deps-qt6-*/libexec/uic")
+  if(QT_HOST_ARCH STREQUAL "arm64" AND QT_UIC_EXECUTABLE)
+    configure_file(
+      cmake/macos/resources/qt-uic-rosetta.in
+      "${CMAKE_CURRENT_BINARY_DIR}/qt-uic-rosetta"
+      @ONLY
+    )
+    file(
+      CHMOD "${CMAKE_CURRENT_BINARY_DIR}/qt-uic-rosetta"
+      PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
+    )
+    set_property(TARGET ${CMAKE_PROJECT_NAME} PROPERTY AUTOUIC_EXECUTABLE "${CMAKE_CURRENT_BINARY_DIR}/qt-uic-rosetta")
+    message(STATUS "Using the Rosetta x86_64 Qt uic fallback")
+  endif()
+
+  # Qt 6.8's WrapOpenGL helper links the legacy AGL framework even though recent macOS SDKs no longer provide it.
+  execute_process(
+    COMMAND xcrun --sdk macosx --show-sdk-path
+    OUTPUT_VARIABLE MACOS_SDK_PATH
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+  )
+  if(NOT EXISTS "${MACOS_SDK_PATH}/System/Library/Frameworks/AGL.framework" AND TARGET WrapOpenGL::WrapOpenGL)
+    get_target_property(WRAP_OPENGL_LIBRARIES WrapOpenGL::WrapOpenGL INTERFACE_LINK_LIBRARIES)
+    list(REMOVE_ITEM WRAP_OPENGL_LIBRARIES "-framework AGL")
+    list(FILTER WRAP_OPENGL_LIBRARIES EXCLUDE REGEX "/AGL\\.framework$")
+    set_property(
+      TARGET WrapOpenGL::WrapOpenGL
+      PROPERTY INTERFACE_LINK_LIBRARIES "${WRAP_OPENGL_LIBRARIES}"
+    )
+    message(STATUS "Removed unavailable AGL framework from Qt's OpenGL dependencies")
+  endif()
+endif()
+
 if(MSVC)
   set(input-overlay_PLATFORM_SOURCES src/util/window_helper_win.cpp src/hook/uiohook_helper_win.cpp)
   if(CMAKE_SIZEOF_VOID_P EQUAL 8)

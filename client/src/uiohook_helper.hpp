@@ -27,7 +27,7 @@
 namespace uiohook_helper {
 inline uint16_t util_mouse_fix(int m)
 {
-#ifndef _WIN32 /* Linux mixes right mouse and middle mouse or is windows getting it wrong? */
+#if defined(__linux__) /* Linux mixes right mouse and middle mouse or is Windows getting it wrong? */
     if (m == 3)
         m = 2;
     else if (m == 2)

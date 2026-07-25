@@ -19,4 +19,6 @@ build/
 client/build-*/
 cmake/.CMakeBuildNumber
 /build_x86_64/
+/build_macos/
+/build_client_macos/
 _codeql_detected_source_root

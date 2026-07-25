@@ -109,8 +109,7 @@ bool start()
         hook_state = true;
         return true;
     case UIOHOOK_ERROR_OUT_OF_MEMORY:
-
-        print(LOG_LEVEL_ERROR, nullptr, "[uiohook] Failed to allocate memory. (%#X)", status);
+        print(LOG_LEVEL_ERROR, "[uiohook] Failed to allocate memory. (%#X)\n", status);
         return false;
     case UIOHOOK_ERROR_X_OPEN_DISPLAY:
         print(LOG_LEVEL_ERROR, nullptr, "[uiohook] Failed to open X11 display. (%#X)", status);
@@ -131,7 +130,9 @@ bool start()
         print(LOG_LEVEL_ERROR, "[uiohook] Failed to register low level windows hook. (%#X)", status);
         return false;
     case UIOHOOK_ERROR_AXAPI_DISABLED:
-        print(LOG_LEVEL_ERROR, "[uiohook] Failed to enable access for assistive devices. (%#X)", status);
+        print(LOG_LEVEL_ERROR,
+              "[uiohook] macOS Accessibility permission is required. Enable it for io_client in System Settings. (%#X)\n",
+              status);
         return false;
     case UIOHOOK_ERROR_CREATE_EVENT_PORT:
         print(LOG_LEVEL_ERROR, "[uiohook] Failed to create apple event port. (%#X)", status);

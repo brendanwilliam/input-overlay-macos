@@ -1,4 +1,14 @@
 cmake_minimum_required(VERSION 3.16...3.21)
+
+if(APPLE)
+    if(NOT DEFINED CMAKE_OSX_DEPLOYMENT_TARGET)
+        set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version" FORCE)
+    endif()
+    if(NOT DEFINED CMAKE_OSX_ARCHITECTURES)
+        set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "macOS architectures" FORCE)
+    endif()
+endif()
+
 project(io_client VERSION 5.0.0)
 
 string(TIMESTAMP TODAY "%Y.%m.%d %H:%M")

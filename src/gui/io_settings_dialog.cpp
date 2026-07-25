@@ -103,6 +103,10 @@ io_settings_dialog::io_settings_dialog(QWidget *parent) : QDialog(parent, Qt::Di
     /* Set red color on label so people don't miss it */
     ui->lbl_local_features->setStyleSheet("QLabel { color: red; "
                                           "font-weight: bold;}");
+#if defined(__APPLE__)
+    ui->lbl_local_features->setText(ui->lbl_local_features->text() + "<br>" +
+                                    QString::fromUtf8(obs_module_get_string("Dialog.MacOS.Accessibility")));
+#endif
 }
 
 void io_settings_dialog::RefreshUi()

@@ -25,7 +25,14 @@
 #include "../network/websocket_server.hpp"
 #include "../network/remote_connection.hpp"
 #include <QFile>
+#include <QFont>
+#include <QImage>
+#include <QPainter>
 #include <obs-frontend-api.h>
+
+extern "C" {
+#include <graphics/graphics.h>
+}
 
 #include <cstring>
 
@@ -88,6 +95,105 @@ bool preset_changed(void *d, obs_properties_t *props, obs_property_t *, obs_data
 }
 } // namespace
 
+class procedural_keyboard {
+public:
+    ~procedural_keyboard()
+    {
+        if (m_texture) {
+            obs_enter_graphics();
+            gs_texture_destroy(m_texture);
+            obs_leave_graphics();
+        }
+    }
+
+    void update(obs_data_t *settings)
+    {
+        m_enabled = obs_data_get_bool(settings, S_PROCEDURAL_ENABLED);
+        m_shape = static_cast<int>(obs_data_get_int(settings, S_PROCEDURAL_SHAPE));
+        m_key_size = static_cast<int>(obs_data_get_int(settings, S_PROCEDURAL_KEY_SIZE));
+        m_gap = static_cast<int>(obs_data_get_int(settings, S_PROCEDURAL_GAP));
+        m_radius = static_cast<int>(obs_data_get_int(settings, S_PROCEDURAL_RADIUS));
+        m_font_size = static_cast<int>(obs_data_get_int(settings, S_PROCEDURAL_FONT_SIZE));
+        m_fill = QColor::fromRgb(static_cast<QRgb>(obs_data_get_int(settings, S_PROCEDURAL_FILL_COLOR)));
+        m_pressed = QColor::fromRgb(static_cast<QRgb>(obs_data_get_int(settings, S_PROCEDURAL_PRESSED_COLOR)));
+        m_border = QColor::fromRgb(static_cast<QRgb>(obs_data_get_int(settings, S_PROCEDURAL_BORDER_COLOR)));
+        m_text = QColor::fromRgb(static_cast<QRgb>(obs_data_get_int(settings, S_PROCEDURAL_TEXT_COLOR)));
+    }
+
+    bool enabled() const { return m_enabled; }
+    uint32_t width() const { return static_cast<uint32_t>(m_key_size * 7 + m_gap * 6); }
+    uint32_t height() const { return static_cast<uint32_t>(m_key_size * 2 + m_gap); }
+
+    void draw(gs_effect_t *effect, const overlay_settings &settings)
+    {
+        render_image(settings);
+        if (!m_texture) {
+            m_texture = gs_texture_create(width(), height(), GS_RGBA, 1, nullptr, GS_DYNAMIC);
+        }
+        if (!m_texture)
+            return;
+
+        gs_texture_set_image(m_texture, m_image.constBits(), static_cast<uint32_t>(m_image.bytesPerLine()), false);
+        gs_blend_state_push();
+        gs_enable_blending(true);
+        gs_blend_function(GS_BLEND_ONE, GS_BLEND_INVSRCALPHA);
+        gs_effect_set_texture(gs_effect_get_param_by_name(effect, "image"), m_texture);
+        gs_draw_sprite(m_texture, 0, width(), height());
+        gs_blend_state_pop();
+    }
+
+private:
+    struct key {
+        const char *label;
+        uint16_t code;
+        int column;
+        int row;
+    };
+
+    void render_image(const overlay_settings &settings)
+    {
+        m_image = QImage(static_cast<int>(width()), static_cast<int>(height()), QImage::Format_RGBA8888);
+        m_image.fill(Qt::transparent);
+
+        QPainter painter(&m_image);
+        painter.setRenderHint(QPainter::Antialiasing);
+        QFont font = painter.font();
+        font.setPixelSize(m_font_size);
+        font.setBold(true);
+        painter.setFont(font);
+        painter.setPen(QPen(m_border, 2));
+
+        static constexpr key keys[] = {
+            {"W", VC_W, 1, 0},    {"A", VC_A, 0, 1},    {"S", VC_S, 1, 1},     {"D", VC_D, 2, 1},
+            {"←", VC_LEFT, 4, 1}, {"↓", VC_DOWN, 5, 1}, {"→", VC_RIGHT, 6, 1},
+        };
+
+        for (const auto &key : keys) {
+            const QRect rect(key.column * (m_key_size + m_gap), key.row * (m_key_size + m_gap), m_key_size, m_key_size);
+            const auto pressed = settings.data.keyboard.find(key.code);
+            painter.setBrush(pressed != settings.data.keyboard.end() && pressed->second ? m_pressed : m_fill);
+            const int radius = m_shape == 0 ? 0 : (m_shape == 2 ? m_key_size / 2 : m_radius);
+            painter.drawRoundedRect(rect.adjusted(1, 1, -1, -1), radius, radius);
+            painter.setPen(m_text);
+            painter.drawText(rect, Qt::AlignCenter, QString::fromUtf8(key.label));
+            painter.setPen(QPen(m_border, 2));
+        }
+    }
+
+    bool m_enabled = false;
+    int m_shape = 1;
+    int m_key_size = 80;
+    int m_gap = 8;
+    int m_radius = 12;
+    int m_font_size = 28;
+    QColor m_fill = QColor(35, 41, 57);
+    QColor m_pressed = QColor(37, 99, 235);
+    QColor m_border = QColor(148, 163, 184);
+    QColor m_text = QColor(255, 255, 255);
+    QImage m_image;
+    gs_texture_t *m_texture = nullptr;
+};
+
 bool overlay_settings::use_local_input()
 {
     return selected_source.empty() || selected_source == T_LOCAL_SOURCE;
@@ -96,6 +202,7 @@ bool overlay_settings::use_local_input()
 input_source::input_source(obs_source_t *source, obs_data_t *settings) : m_source(source)
 {
     m_overlay = std::make_unique<overlay>(&m_settings);
+    m_procedural_keyboard = std::make_unique<procedural_keyboard>();
     obs_source_update(m_source, settings);
     m_settings.image_file = obs_data_get_string(settings, S_OVERLAY_FILE);
     m_settings.layout_file = obs_data_get_string(settings, S_LAYOUT_FILE);
@@ -114,6 +221,12 @@ input_source::~input_source() = default;
 
 inline void input_source::update(obs_data_t *settings)
 {
+    m_procedural_keyboard->update(settings);
+    if (m_procedural_keyboard->enabled()) {
+        m_settings.cx = m_procedural_keyboard->width();
+        m_settings.cy = m_procedural_keyboard->height();
+    }
+
     m_settings.selected_source = obs_data_get_string(settings, S_INPUT_SOURCE);
 
     m_settings.gamepad_name = obs_data_get_string(settings, S_CONTROLLER_ID);
@@ -138,6 +251,9 @@ inline void input_source::update(obs_data_t *settings)
 
 inline void input_source::tick(float seconds)
 {
+    if (m_procedural_keyboard->enabled())
+        m_overlay->refresh_data();
+
     if (m_overlay->is_loaded()) {
         m_overlay->refresh_data();
         m_overlay->tick(seconds);
@@ -162,8 +278,13 @@ inline void input_source::tick(float seconds)
     }
 }
 
-inline void input_source::render(gs_effect_t *effect) const
+inline void input_source::render(gs_effect_t *effect)
 {
+    if (m_procedural_keyboard->enabled()) {
+        m_procedural_keyboard->draw(effect, m_settings);
+        return;
+    }
+
     if (!m_overlay->get_texture() || !m_overlay->get_texture()->texture)
         return;
 
@@ -281,6 +402,22 @@ obs_properties_t *get_properties_for_overlay(void *data)
         obs_property_list_add_string(preset, entry.name, entry.id);
     obs_property_set_modified_callback2(preset, preset_changed, data);
 
+    const auto procedural = obs_properties_add_bool(props, S_PROCEDURAL_ENABLED, T_PROCEDURAL_ENABLED);
+    UNUSED_PARAMETER(procedural);
+    auto *shape = obs_properties_add_list(props, S_PROCEDURAL_SHAPE, T_PROCEDURAL_SHAPE, OBS_COMBO_TYPE_LIST,
+                                          OBS_COMBO_FORMAT_INT);
+    obs_property_list_add_int(shape, T_PROCEDURAL_SHAPE_RECTANGLE, 0);
+    obs_property_list_add_int(shape, T_PROCEDURAL_SHAPE_ROUNDED, 1);
+    obs_property_list_add_int(shape, T_PROCEDURAL_SHAPE_PILL, 2);
+    obs_properties_add_int_slider(props, S_PROCEDURAL_KEY_SIZE, T_PROCEDURAL_KEY_SIZE, 32, 200, 1);
+    obs_properties_add_int_slider(props, S_PROCEDURAL_GAP, T_PROCEDURAL_GAP, 0, 40, 1);
+    obs_properties_add_int_slider(props, S_PROCEDURAL_RADIUS, T_PROCEDURAL_RADIUS, 0, 80, 1);
+    obs_properties_add_int_slider(props, S_PROCEDURAL_FONT_SIZE, T_PROCEDURAL_FONT_SIZE, 10, 96, 1);
+    obs_properties_add_color(props, S_PROCEDURAL_FILL_COLOR, T_PROCEDURAL_FILL_COLOR);
+    obs_properties_add_color(props, S_PROCEDURAL_PRESSED_COLOR, T_PROCEDURAL_PRESSED_COLOR);
+    obs_properties_add_color(props, S_PROCEDURAL_BORDER_COLOR, T_PROCEDURAL_BORDER_COLOR);
+    obs_properties_add_color(props, S_PROCEDURAL_TEXT_COLOR, T_PROCEDURAL_TEXT_COLOR);
+
     /* Config and texture file path */
     auto *texture = obs_properties_add_path(props, S_OVERLAY_FILE, T_TEXTURE_FILE, OBS_PATH_FILE,
                                             qt_to_utf8(filter_img), qt_to_utf8(img_path));
@@ -352,7 +489,18 @@ void register_overlay_source()
     si.destroy = [](void *data) { delete static_cast<input_source *>(data); };
     si.get_width = [](void *data) { return static_cast<input_source *>(data)->m_settings.cx; };
     si.get_height = [](void *data) { return static_cast<input_source *>(data)->m_settings.cy; };
-    si.get_defaults = [](obs_data_t *settings) { UNUSED_PARAMETER(settings); };
+    si.get_defaults = [](obs_data_t *settings) {
+        obs_data_set_default_bool(settings, S_PROCEDURAL_ENABLED, false);
+        obs_data_set_default_int(settings, S_PROCEDURAL_SHAPE, 1);
+        obs_data_set_default_int(settings, S_PROCEDURAL_KEY_SIZE, 80);
+        obs_data_set_default_int(settings, S_PROCEDURAL_GAP, 8);
+        obs_data_set_default_int(settings, S_PROCEDURAL_RADIUS, 12);
+        obs_data_set_default_int(settings, S_PROCEDURAL_FONT_SIZE, 28);
+        obs_data_set_default_int(settings, S_PROCEDURAL_FILL_COLOR, 0x232939);
+        obs_data_set_default_int(settings, S_PROCEDURAL_PRESSED_COLOR, 0x2563EB);
+        obs_data_set_default_int(settings, S_PROCEDURAL_BORDER_COLOR, 0x94A3B8);
+        obs_data_set_default_int(settings, S_PROCEDURAL_TEXT_COLOR, 0xFFFFFF);
+    };
     si.update = [](void *data, obs_data_t *settings) { static_cast<input_source *>(data)->update(settings); };
     si.video_tick = [](void *data, float seconds) { static_cast<input_source *>(data)->tick(seconds); };
     si.video_render = [](void *data, gs_effect_t *effect) { static_cast<input_source *>(data)->render(effect); };

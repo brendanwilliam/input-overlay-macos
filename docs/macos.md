@@ -58,6 +58,12 @@ Add an **Input Overlay** source to a scene, then open its properties. Use the **
 keyboard, mouse, or controller layout; it automatically applies the matching texture and layout files. The file fields
 remain available for custom layouts.
 
+### Procedural keyboard style
+
+Enable **Use procedural keyboard style** in the same source properties to render a live WASD and arrow-key overlay
+without image assets. Adjust the key shape, size, gap, corner radius, font size, and idle, pressed, border, and text
+colors directly in OBS. This mode uses the local Input Overlay hook and requires the Accessibility permission above.
+
 To remove a source or release installation, quit OBS and delete:
 
 ```text

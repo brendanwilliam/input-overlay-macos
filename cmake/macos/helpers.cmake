@@ -61,6 +61,16 @@ function(set_target_properties_plugin target)
   install(TARGETS ${target} LIBRARY DESTINATION .)
   install(FILES "$<TARGET_BUNDLE_DIR:${target}>.dsym" CONFIGURATIONS Release DESTINATION . OPTIONAL)
 
+  # OBS is signed with the hardened runtime and will not load an unsigned local plugin.
+  # Sign after CMake has installed all bundle resources and before creating the local package.
+  set(local_plugin_path "\$ENV{DESTDIR}${CMAKE_INSTALL_PREFIX}/${target}.plugin")
+  string(
+    CONCAT local_signing_code
+    "execute_process(COMMAND /usr/bin/xattr -cr \"${local_plugin_path}\" COMMAND_ERROR_IS_FATAL ANY)\n"
+    "execute_process(COMMAND /usr/bin/codesign --force --deep --sign - \"${local_plugin_path}\" COMMAND_ERROR_IS_FATAL ANY)"
+  )
+  install(CODE "${local_signing_code}")
+
   configure_file(cmake/macos/resources/distribution.in "${CMAKE_CURRENT_BINARY_DIR}/distribution" @ONLY)
   configure_file(cmake/macos/resources/create-package.cmake.in "${CMAKE_CURRENT_BINARY_DIR}/create-package.cmake" @ONLY)
   install(SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/create-package.cmake")

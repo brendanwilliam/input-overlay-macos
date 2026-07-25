@@ -46,6 +46,9 @@ The last command installs `input-overlay.plugin` into:
 ~/Library/Application Support/obs-studio/plugins
 ```
 
+The install step automatically applies an ad-hoc signature so OBS can load a local build. Published releases are
+signed for distribution.
+
 Restart OBS and follow the Accessibility steps above. The first configure can take a while because it downloads and
 builds the OBS development dependencies.
 

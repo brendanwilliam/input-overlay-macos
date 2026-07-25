@@ -98,7 +98,9 @@ elseif("${CMAKE_SYSTEM_NAME}" MATCHES "Linux")
 
   set(input-overlay_PLATFORM_SOURCES src/util/window_helper_nix.cpp src/hook/uiohook_helper_linux.cpp)
 elseif(APPLE)
-  set(input-overlay_PLATFORM_SOURCES src/util/window_helper_macos.mm src/hook/uiohook_helper_linux.cpp)
+  find_library(APPLICATION_SERVICES_FRAMEWORK ApplicationServices REQUIRED)
+  set(input-overlay_PLATFORM_SOURCES src/util/window_helper_macos.mm src/hook/uiohook_helper_macos.mm)
+  set(input-overlay_PLATFORM_DEPS ${APPLICATION_SERVICES_FRAMEWORK})
 endif()
 
 if(LOCAL_INSTALLATION)

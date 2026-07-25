@@ -67,6 +67,7 @@ jobs:
           variants=(
             'windows-x64;zip|exe'
             'ubuntu-24.04-x86_64;tar.xz|deb|ddeb'
+            'macos-universal;pkg|tar.xz'
             'sources;tar.xz'
             'presets;zip'
           )

@@ -28,8 +28,9 @@
 #include <QJsonObject>
 #include <QJsonValue>
 
-#if __linux__
+#if defined(__linux__) || defined(__APPLE__)
 #include <ifaddrs.h>
+#include <net/if.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #elif _WIN32
@@ -53,19 +54,19 @@ QString get_local_ip()
     /* Get ip of first interface */
 #if _WIN32
     iterate_ips(local_ip, 64);
-#elif __linux__
+#elif defined(__linux__) || defined(__APPLE__)
     struct ifaddrs *addrs;
-    getifaddrs(&addrs);
-    struct ifaddrs *tmp = addrs;
-    while (tmp) {
-        if (tmp->ifa_addr && tmp->ifa_addr->sa_family == AF_INET) {
-            struct sockaddr_in *p_addr = (struct sockaddr_in *)tmp->ifa_addr;
-            if (tmp->ifa_name != std::string("lo")) {
-                snprintf(local_ip, sizeof(local_ip), "%s", inet_ntoa(p_addr->sin_addr));
-                break;
+    if (getifaddrs(&addrs) == 0) {
+        struct ifaddrs *tmp = addrs;
+        while (tmp) {
+            if (tmp->ifa_addr && tmp->ifa_addr->sa_family == AF_INET && !(tmp->ifa_flags & IFF_LOOPBACK)) {
+                struct sockaddr_in *p_addr = (struct sockaddr_in *)tmp->ifa_addr;
+                if (inet_ntop(AF_INET, &p_addr->sin_addr, local_ip, sizeof(local_ip)))
+                    break;
             }
+            tmp = tmp->ifa_next;
         }
-        tmp = tmp->ifa_next;
+        freeifaddrs(addrs);
     }
 #endif
     return local_ip;

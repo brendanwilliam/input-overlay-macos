@@ -3,8 +3,18 @@
 [![Push to master](https://github.com/univrsal/input-overlay/actions/workflows/push.yaml/badge.svg)](https://github.com/univrsal/input-overlay/actions/workflows/push.yaml)
 
 Show keyboard, mouse and gamepad input on stream.\
-Available for OBS Studio on Windows and Linux (64bit).
+Available for OBS Studio on Windows, Linux, and macOS (64bit).
 Head over to [releases](https://github.com/univrsal/input-overlay/releases) for binaries.
+
+## macOS
+
+macOS builds target macOS 11.0 or newer and are universal (`arm64` and `x86_64`). Install the signed `.pkg` from a
+release, then restart OBS. To capture local keyboard and mouse input, enable **OBS** under **System Settings → Privacy
+& Security → Accessibility**, then restart OBS. The standalone `io_client` is distributed as a separate universal
+archive for trusted local-network forwarding.
+
+See the [macOS installation guide](docs/macos.md) for release installation, local builds, permissions, and
+troubleshooting.
 
 ## [Wiki](https://github.com/univrsal/input-overlay/wiki)
 ## [Installation](https://github.com/univrsal/input-overlay/wiki/Installation)

@@ -167,6 +167,13 @@ package() {
     popd
   }
 
+  if [[ -d ${project_root}/release/${config}/io_client ]] {
+    log_group "Archiving ${product_name} headless client..."
+    pushd ${project_root}/release/${config}
+    XZ_OPT=-T0 tar -cvJf ${project_root}/release/${output_name}-client.tar.xz io_client
+    popd
+  }
+
   log_group
 }
 

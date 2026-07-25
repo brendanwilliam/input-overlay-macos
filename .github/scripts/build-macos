@@ -144,8 +144,12 @@ build() {
   popd
 
   log_group "Building ${product_name}-client..."
-  cmake -S ./client -B build_client_macos
+  cmake -S ./client -B build_client_macos -DCMAKE_BUILD_TYPE=${config}
   cmake --build build_client_macos --config ${config}
+  if (( codesign )); then
+    codesign --force --options runtime --timestamp --sign "${CODESIGN_IDENT}" build_client_macos/io_client
+  fi
+  cmake --install build_client_macos --config ${config} --prefix "${project_root}/release/${config}"
 
   log_group "Installing ${product_name}..."
   cmake --install build_macos --config ${config} --prefix "${project_root}/release/${config}"

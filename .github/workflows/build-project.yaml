@@ -199,3 +199,88 @@ jobs:
         with:
           name: ${{ steps.setup.outputs.pluginName }}-${{ steps.setup.outputs.pluginVersion }}-presets-${{ needs.check-event.outputs.commitHash }}
           path: ${{ github.workspace }}/release/${{ steps.setup.outputs.pluginName }}-${{ steps.setup.outputs.pluginVersion }}-presets*.*
+
+  macos-build:
+    name: Build for macOS 🍎
+    runs-on: macos-14
+    needs: check-event
+    defaults:
+      run:
+        shell: zsh --no-rcs --errexit --pipefail {0}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Set Up Environment 🔧
+        id: setup
+        run: |
+          read -r product_name product_version <<< \
+            "$(jq -r '. | {name, version} | join(" ")' buildspec.json)"
+
+          print "pluginName=${product_name}" >> $GITHUB_OUTPUT
+          print "pluginVersion=${product_version}" >> $GITHUB_OUTPUT
+
+      - uses: ./.github/actions/setup-macos-codesigning
+        id: codesign
+        with:
+          codesignIdentity: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          installerIdentity: ${{ secrets.MACOS_SIGNING_IDENTITY_INSTALLER }}
+          codesignCertificate: ${{ secrets.MACOS_SIGNING_CERT }}
+          certificatePassword: ${{ secrets.MACOS_SIGNING_CERT_PASSWORD }}
+          keychainPassword: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
+          notarizationUser: ${{ secrets.MACOS_NOTARIZATION_USERNAME }}
+          notarizationPassword: ${{ secrets.MACOS_NOTARIZATION_PASSWORD }}
+
+      - uses: actions/cache/restore@v4
+        id: ccache-cache
+        with:
+          path: ${{ github.workspace }}/.ccache
+          key: macos-14-ccache-universal-${{ needs.check-event.outputs.config }}
+          restore-keys: |
+            macos-14-ccache-universal-
+
+      - name: Build Plugin 🧱
+        uses: ./.github/actions/build-plugin
+        with:
+          target: universal
+          config: ${{ needs.check-event.outputs.config }}
+          codesign: ${{ needs.check-event.outputs.codesign == 'true' && steps.codesign.outputs.haveCodesignIdent == 'true' }}
+          codesignIdent: ${{ steps.codesign.outputs.codesignIdent }}
+          codesignTeam: ${{ steps.codesign.outputs.codesignTeam }}
+
+      - name: Package Plugin 📀
+        uses: ./.github/actions/package-plugin
+        with:
+          target: universal
+          config: ${{ needs.check-event.outputs.config }}
+          package: ${{ needs.check-event.outputs.package }}
+          codesign: ${{ needs.check-event.outputs.codesign == 'true' && steps.codesign.outputs.haveCodesignIdent == 'true' }}
+          notarize: ${{ needs.check-event.outputs.notarize == 'true' && steps.codesign.outputs.haveNotarizationUser == 'true' }}
+          codesignIdent: ${{ steps.codesign.outputs.codesignIdent }}
+          installerIdent: ${{ steps.codesign.outputs.installerIdent }}
+          codesignTeam: ${{ steps.codesign.outputs.codesignTeam }}
+          codesignUser: ${{ secrets.MACOS_NOTARIZATION_USERNAME }}
+          codesignPass: ${{ secrets.MACOS_NOTARIZATION_PASSWORD }}
+
+      - name: Verify universal artifacts ☑️
+        run: |
+          plugin_bundle="release/${{ needs.check-event.outputs.config }}/input-overlay.plugin"
+          plugin_binary="${plugin_bundle}/Contents/MacOS/input-overlay"
+          client_binary="release/${{ needs.check-event.outputs.config }}/io_client/io_client"
+          lipo "${plugin_binary}" -verify_arch arm64 x86_64
+          lipo "${client_binary}" -verify_arch arm64 x86_64
+          codesign --verify --deep --strict "${plugin_bundle}"
+
+      - name: Upload Artifacts 📡
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.setup.outputs.pluginName }}-${{ steps.setup.outputs.pluginVersion }}-macos-universal-${{ needs.check-event.outputs.commitHash }}
+          path: ${{ github.workspace }}/release/${{ needs.check-event.outputs.pluginName }}-${{ steps.setup.outputs.pluginVersion }}-macos-universal*.*
+
+      - uses: actions/cache/save@v4
+        if: github.event_name != 'pull_request' && steps.ccache-cache.outputs.cache-hit != 'true'
+        with:
+          path: ${{ github.workspace }}/.ccache
+          key: macos-14-ccache-universal-${{ needs.check-event.outputs.config }}

@@ -28,6 +28,10 @@ if(NOT CODESIGN_TEAM)
   # Switch to manual codesigning if no codesigning team is provided
   set(CMAKE_XCODE_ATTRIBUTE_CODE_SIGN_STYLE Manual)
   set(CMAKE_XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY "${CODESIGN_IDENTITY}")
+  if(CODESIGN_IDENTITY STREQUAL "-")
+    # The install step cleans bundle metadata and applies the local ad-hoc signature.
+    set(CMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED NO)
+  endif()
 else()
   if(CODESIGN_IDENTITY AND NOT CODESIGN_IDENTITY STREQUAL "-")
     # Switch to manual codesigning if a non-adhoc codesigning identity is provided

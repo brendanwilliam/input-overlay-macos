@@ -25,10 +25,10 @@
 #include "../network/websocket_server.hpp"
 #include "../network/remote_connection.hpp"
 #include <QFile>
+#include <QColor>
 #include <QFont>
 #include <QImage>
 #include <QPainter>
-#include <QRegularExpression>
 #include <obs-frontend-api.h>
 
 extern "C" {
@@ -58,6 +58,12 @@ constexpr bundled_preset bundled_presets[] = {
      "xbox-controller/xbox-controller.png"},
     {"DualSense controller", "dualsense", "dualsense/dualsense.json", "dualsense/dualsense.png"},
 };
+
+QColor color_from_obs(uint32_t color)
+{
+    return QColor(static_cast<int>(color & 0xff), static_cast<int>((color >> 8) & 0xff),
+                  static_cast<int>((color >> 16) & 0xff));
+}
 
 const bundled_preset *find_bundled_preset(const char *id)
 {
@@ -115,10 +121,10 @@ public:
         m_gap = static_cast<int>(obs_data_get_int(settings, S_PROCEDURAL_GAP));
         m_radius = static_cast<int>(obs_data_get_int(settings, S_PROCEDURAL_RADIUS));
         m_font_size = static_cast<int>(obs_data_get_int(settings, S_PROCEDURAL_FONT_SIZE));
-        m_fill = QColor::fromRgb(static_cast<QRgb>(obs_data_get_int(settings, S_PROCEDURAL_FILL_COLOR)));
-        m_pressed = QColor::fromRgb(static_cast<QRgb>(obs_data_get_int(settings, S_PROCEDURAL_PRESSED_COLOR)));
-        m_border = QColor::fromRgb(static_cast<QRgb>(obs_data_get_int(settings, S_PROCEDURAL_BORDER_COLOR)));
-        m_text = QColor::fromRgb(static_cast<QRgb>(obs_data_get_int(settings, S_PROCEDURAL_TEXT_COLOR)));
+        m_fill = color_from_obs(static_cast<uint32_t>(obs_data_get_int(settings, S_PROCEDURAL_FILL_COLOR)));
+        m_pressed = color_from_obs(static_cast<uint32_t>(obs_data_get_int(settings, S_PROCEDURAL_PRESSED_COLOR)));
+        m_border = color_from_obs(static_cast<uint32_t>(obs_data_get_int(settings, S_PROCEDURAL_BORDER_COLOR)));
+        m_text = color_from_obs(static_cast<uint32_t>(obs_data_get_int(settings, S_PROCEDURAL_TEXT_COLOR)));
         parse_layout(QString::fromUtf8(obs_data_get_string(settings, S_PROCEDURAL_LAYOUT)));
     }
 
@@ -177,6 +183,26 @@ private:
             return VC_R;
         if (key == "F")
             return VC_F;
+        if (key == "1")
+            return VC_1;
+        if (key == "2")
+            return VC_2;
+        if (key == "3")
+            return VC_3;
+        if (key == "4")
+            return VC_4;
+        if (key == "5")
+            return VC_5;
+        if (key == "6")
+            return VC_6;
+        if (key == "7")
+            return VC_7;
+        if (key == "8")
+            return VC_8;
+        if (key == "9")
+            return VC_9;
+        if (key == "0")
+            return VC_0;
         if (key == "SPACE")
             return VC_SPACE;
         if (key == "SHIFT")
@@ -205,18 +231,29 @@ private:
     void parse_layout(const QString &layout)
     {
         m_keys.clear();
-        const QString effective_layout = layout.trimmed().isEmpty() ? "_ W _ _ _ _ _\nA S D _ LEFT DOWN RIGHT" : layout;
-        const QStringList rows = effective_layout.split('\n', Qt::SkipEmptyParts);
+        const QString effective_layout = layout.trimmed().isEmpty() ? " W     \nASD[LEFT][DOWN][RIGHT]" : layout;
+        const QStringList rows = effective_layout.split('\n', Qt::KeepEmptyParts);
         m_rows = std::max(1, static_cast<int>(rows.size()));
         m_columns = 1;
         for (int row = 0; row < rows.size(); row++) {
-            const QStringList tokens = rows[row].trimmed().split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
-            m_columns = std::max(m_columns, static_cast<int>(tokens.size()));
-            for (int column = 0; column < tokens.size(); column++) {
-                const uint16_t code = keycode_for_token(tokens[column]);
+            int column = 0;
+            for (int index = 0; index < rows[row].size(); index++, column++) {
+                QString token = rows[row][index];
+                if (token == "[") {
+                    const int close = rows[row].indexOf(']', index);
+                    if (close != -1) {
+                        token = rows[row].mid(index + 1, close - index - 1);
+                        index = close;
+                    }
+                }
+                if (token == " " || token == "_")
+                    continue;
+
+                const uint16_t code = keycode_for_token(token);
                 if (code != VC_UNDEFINED)
-                    m_keys.push_back({tokens[column].toUpper(), code, column, row});
+                    m_keys.push_back({token.toUpper(), code, column, row});
             }
+            m_columns = std::max(m_columns, column);
         }
     }
 
@@ -572,11 +609,11 @@ void register_overlay_source()
         obs_data_set_default_int(settings, S_PROCEDURAL_GAP, 8);
         obs_data_set_default_int(settings, S_PROCEDURAL_RADIUS, 12);
         obs_data_set_default_int(settings, S_PROCEDURAL_FONT_SIZE, 28);
-        obs_data_set_default_int(settings, S_PROCEDURAL_FILL_COLOR, 0x232939);
-        obs_data_set_default_int(settings, S_PROCEDURAL_PRESSED_COLOR, 0x2563EB);
-        obs_data_set_default_int(settings, S_PROCEDURAL_BORDER_COLOR, 0x94A3B8);
+        obs_data_set_default_int(settings, S_PROCEDURAL_FILL_COLOR, 0x392923);
+        obs_data_set_default_int(settings, S_PROCEDURAL_PRESSED_COLOR, 0xEB6325);
+        obs_data_set_default_int(settings, S_PROCEDURAL_BORDER_COLOR, 0xB8A394);
         obs_data_set_default_int(settings, S_PROCEDURAL_TEXT_COLOR, 0xFFFFFF);
-        obs_data_set_default_string(settings, S_PROCEDURAL_LAYOUT, "_ W _ _ _ _ _\nA S D _ LEFT DOWN RIGHT");
+        obs_data_set_default_string(settings, S_PROCEDURAL_LAYOUT, " W     \nASD[LEFT][DOWN][RIGHT]");
         obs_data_set_default_int(settings, S_MOUSE_SENS, 100);
     };
     si.update = [](void *data, obs_data_t *settings) { static_cast<input_source *>(data)->update(settings); };

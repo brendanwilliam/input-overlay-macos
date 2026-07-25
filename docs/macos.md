@@ -62,10 +62,11 @@ remain available for custom layouts.
 
 Enable **Use procedural keyboard style** in the same source properties to render a live WASD and arrow-key overlay
 without image assets. Adjust the key shape, size, gap, corner radius, font size, and idle, pressed, border, and text
-colors directly in OBS. Use **Custom key layout** to choose and arrange keys: enter one row per line and separate keys
-with spaces. For example, `Q W E` creates one row; use `_` as an empty grid slot. Supported keys include letters,
-Space, Shift, Ctrl, Alt, Tab, Enter, Esc, and the arrow keys. This mode uses the local Input Overlay hook and requires
-the Accessibility permission above.
+colors directly in OBS. Use **Custom key layout** to choose and arrange keys: each character occupies one grid cell,
+and spaces (or `_`) are blank cells. For example, `qwer` followed by `  df` gives a staggered second row. Use bracketed
+names for wider labels in a single cell, such as `[SPACE]` or `[LEFT]`. Supported keys include letters, numbers, Space,
+Shift, Ctrl, Alt, Tab, Enter, Esc, and the arrow keys. This mode uses the local Input Overlay hook and requires the
+Accessibility permission above.
 
 To remove a source or release installation, quit OBS and delete:
 

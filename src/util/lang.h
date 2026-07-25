@@ -44,6 +44,7 @@
 #define T_PROCEDURAL_PRESSED_COLOR      T_("Overlay.Procedural.PressedColor")
 #define T_PROCEDURAL_BORDER_COLOR       T_("Overlay.Procedural.BorderColor")
 #define T_PROCEDURAL_TEXT_COLOR         T_("Overlay.Procedural.TextColor")
+#define T_PROCEDURAL_LAYOUT             T_("Overlay.Procedural.Layout")
 #define T_LINEAR_ALPHA                  T_("Overlay.LinearAlpha")
 #define T_FILTER_IMAGE_FILES            T_("Filter.ImageFiles")
 #define T_FILTER_TEXT_FILES             T_("Filter.TextFiles")

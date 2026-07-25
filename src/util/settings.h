@@ -55,6 +55,7 @@
 #define S_PROCEDURAL_PRESSED_COLOR      "io.procedural_pressed_color"
 #define S_PROCEDURAL_BORDER_COLOR       "io.procedural_border_color"
 #define S_PROCEDURAL_TEXT_COLOR         "io.procedural_text_color"
+#define S_PROCEDURAL_LAYOUT             "io.procedural_layout"
 #define S_CONTROLLER_ID                 "io.controller_id"
 #define S_CONTROLLER_L_DEAD_ZONE        "io.controller_l_deadzone"
 #define S_CONTROLLER_R_DEAD_ZONE        "io.controller_r_deadzone"

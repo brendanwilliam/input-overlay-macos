@@ -28,6 +28,7 @@
 #include <QFont>
 #include <QImage>
 #include <QPainter>
+#include <QRegularExpression>
 #include <obs-frontend-api.h>
 
 extern "C" {
@@ -118,17 +119,24 @@ public:
         m_pressed = QColor::fromRgb(static_cast<QRgb>(obs_data_get_int(settings, S_PROCEDURAL_PRESSED_COLOR)));
         m_border = QColor::fromRgb(static_cast<QRgb>(obs_data_get_int(settings, S_PROCEDURAL_BORDER_COLOR)));
         m_text = QColor::fromRgb(static_cast<QRgb>(obs_data_get_int(settings, S_PROCEDURAL_TEXT_COLOR)));
+        parse_layout(QString::fromUtf8(obs_data_get_string(settings, S_PROCEDURAL_LAYOUT)));
     }
 
     bool enabled() const { return m_enabled; }
-    uint32_t width() const { return static_cast<uint32_t>(m_key_size * 7 + m_gap * 6); }
-    uint32_t height() const { return static_cast<uint32_t>(m_key_size * 2 + m_gap); }
+    uint32_t width() const { return static_cast<uint32_t>(m_columns * m_key_size + (m_columns - 1) * m_gap); }
+    uint32_t height() const { return static_cast<uint32_t>(m_rows * m_key_size + (m_rows - 1) * m_gap); }
 
     void draw(gs_effect_t *effect, const overlay_settings &settings)
     {
         render_image(settings);
+        if (m_texture && (m_texture_width != width() || m_texture_height != height())) {
+            gs_texture_destroy(m_texture);
+            m_texture = nullptr;
+        }
         if (!m_texture) {
             m_texture = gs_texture_create(width(), height(), GS_RGBA, 1, nullptr, GS_DYNAMIC);
+            m_texture_width = width();
+            m_texture_height = height();
         }
         if (!m_texture)
             return;
@@ -144,11 +152,73 @@ public:
 
 private:
     struct key {
-        const char *label;
+        QString label;
         uint16_t code;
         int column;
         int row;
     };
+
+    static uint16_t keycode_for_token(const QString &token)
+    {
+        const QString key = token.toUpper();
+        if (key == "W")
+            return VC_W;
+        if (key == "A")
+            return VC_A;
+        if (key == "S")
+            return VC_S;
+        if (key == "D")
+            return VC_D;
+        if (key == "Q")
+            return VC_Q;
+        if (key == "E")
+            return VC_E;
+        if (key == "R")
+            return VC_R;
+        if (key == "F")
+            return VC_F;
+        if (key == "SPACE")
+            return VC_SPACE;
+        if (key == "SHIFT")
+            return VC_SHIFT_L;
+        if (key == "CTRL" || key == "CONTROL")
+            return VC_CONTROL_L;
+        if (key == "ALT")
+            return VC_ALT_L;
+        if (key == "TAB")
+            return VC_TAB;
+        if (key == "ENTER")
+            return VC_ENTER;
+        if (key == "ESC" || key == "ESCAPE")
+            return VC_ESCAPE;
+        if (key == "UP" || key == "↑")
+            return VC_UP;
+        if (key == "DOWN" || key == "↓")
+            return VC_DOWN;
+        if (key == "LEFT" || key == "←")
+            return VC_LEFT;
+        if (key == "RIGHT" || key == "→")
+            return VC_RIGHT;
+        return VC_UNDEFINED;
+    }
+
+    void parse_layout(const QString &layout)
+    {
+        m_keys.clear();
+        const QString effective_layout = layout.trimmed().isEmpty() ? "_ W _ _ _ _ _\nA S D _ LEFT DOWN RIGHT" : layout;
+        const QStringList rows = effective_layout.split('\n', Qt::SkipEmptyParts);
+        m_rows = std::max(1, static_cast<int>(rows.size()));
+        m_columns = 1;
+        for (int row = 0; row < rows.size(); row++) {
+            const QStringList tokens = rows[row].trimmed().split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
+            m_columns = std::max(m_columns, static_cast<int>(tokens.size()));
+            for (int column = 0; column < tokens.size(); column++) {
+                const uint16_t code = keycode_for_token(tokens[column]);
+                if (code != VC_UNDEFINED)
+                    m_keys.push_back({tokens[column].toUpper(), code, column, row});
+            }
+        }
+    }
 
     void render_image(const overlay_settings &settings)
     {
@@ -158,24 +228,24 @@ private:
         QPainter painter(&m_image);
         painter.setRenderHint(QPainter::Antialiasing);
         QFont font = painter.font();
-        font.setPixelSize(m_font_size);
+        font.setPixelSize(std::min(m_font_size, m_key_size - 12));
         font.setBold(true);
         painter.setFont(font);
         painter.setPen(QPen(m_border, 2));
 
-        static constexpr key keys[] = {
-            {"W", VC_W, 1, 0},    {"A", VC_A, 0, 1},    {"S", VC_S, 1, 1},     {"D", VC_D, 2, 1},
-            {"←", VC_LEFT, 4, 1}, {"↓", VC_DOWN, 5, 1}, {"→", VC_RIGHT, 6, 1},
-        };
-
-        for (const auto &key : keys) {
+        for (const auto &key : m_keys) {
             const QRect rect(key.column * (m_key_size + m_gap), key.row * (m_key_size + m_gap), m_key_size, m_key_size);
             const auto pressed = settings.data.keyboard.find(key.code);
             painter.setBrush(pressed != settings.data.keyboard.end() && pressed->second ? m_pressed : m_fill);
             const int radius = m_shape == 0 ? 0 : (m_shape == 2 ? m_key_size / 2 : m_radius);
             painter.drawRoundedRect(rect.adjusted(1, 1, -1, -1), radius, radius);
             painter.setPen(m_text);
-            painter.drawText(rect, Qt::AlignCenter, QString::fromUtf8(key.label));
+            QFont key_font = font;
+            while (key_font.pixelSize() > 8 && QFontMetrics(key_font).horizontalAdvance(key.label) > rect.width() - 12)
+                key_font.setPixelSize(key_font.pixelSize() - 1);
+            painter.setFont(key_font);
+            painter.drawText(rect, Qt::AlignCenter, key.label);
+            painter.setFont(font);
             painter.setPen(QPen(m_border, 2));
         }
     }
@@ -190,8 +260,13 @@ private:
     QColor m_pressed = QColor(37, 99, 235);
     QColor m_border = QColor(148, 163, 184);
     QColor m_text = QColor(255, 255, 255);
+    std::vector<key> m_keys;
+    int m_columns = 7;
+    int m_rows = 2;
     QImage m_image;
     gs_texture_t *m_texture = nullptr;
+    uint32_t m_texture_width = 0;
+    uint32_t m_texture_height = 0;
 };
 
 bool overlay_settings::use_local_input()
@@ -417,6 +492,7 @@ obs_properties_t *get_properties_for_overlay(void *data)
     obs_properties_add_color(props, S_PROCEDURAL_PRESSED_COLOR, T_PROCEDURAL_PRESSED_COLOR);
     obs_properties_add_color(props, S_PROCEDURAL_BORDER_COLOR, T_PROCEDURAL_BORDER_COLOR);
     obs_properties_add_color(props, S_PROCEDURAL_TEXT_COLOR, T_PROCEDURAL_TEXT_COLOR);
+    obs_properties_add_text(props, S_PROCEDURAL_LAYOUT, T_PROCEDURAL_LAYOUT, OBS_TEXT_MULTILINE);
 
     /* Config and texture file path */
     auto *texture = obs_properties_add_path(props, S_OVERLAY_FILE, T_TEXTURE_FILE, OBS_PATH_FILE,
@@ -444,7 +520,7 @@ obs_properties_t *get_properties_for_overlay(void *data)
         network::remote_data_map_mutex.unlock();
     }
     /* Mouse stuff */
-    obs_properties_add_int_slider(props, S_MOUSE_SENS, T_MOUSE_SENS, 1, 500, 1);
+    obs_properties_add_int_slider(props, S_MOUSE_SENS, T_MOUSE_SENS, 1, 2000, 1);
 
     const auto use_center = obs_properties_add_bool(props, S_MONITOR_USE_CENTER, T_MONITOR_USE_CENTER);
     obs_property_set_modified_callback(use_center, use_monitor_center_changed);
@@ -500,6 +576,8 @@ void register_overlay_source()
         obs_data_set_default_int(settings, S_PROCEDURAL_PRESSED_COLOR, 0x2563EB);
         obs_data_set_default_int(settings, S_PROCEDURAL_BORDER_COLOR, 0x94A3B8);
         obs_data_set_default_int(settings, S_PROCEDURAL_TEXT_COLOR, 0xFFFFFF);
+        obs_data_set_default_string(settings, S_PROCEDURAL_LAYOUT, "_ W _ _ _ _ _\nA S D _ LEFT DOWN RIGHT");
+        obs_data_set_default_int(settings, S_MOUSE_SENS, 100);
     };
     si.update = [](void *data, obs_data_t *settings) { static_cast<input_source *>(data)->update(settings); };
     si.video_tick = [](void *data, float seconds) { static_cast<input_source *>(data)->tick(seconds); };

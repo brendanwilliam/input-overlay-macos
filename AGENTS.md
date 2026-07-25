@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-This repository builds the `input-overlay` OBS plugin and a separate headless input client. Plugin code is in `src/`: `gui/` contains Qt settings UI, `hook/` captures input, `network/` handles WebSocket traffic, and `util/` implements configuration and overlay elements. The client lives in `client/src/`. Shared and third-party dependencies are under `deps/`; avoid editing vendored code unless updating the dependency. Runtime web assets and translations are in `data/`, while `presets/` contains user-facing overlay layouts. CI and packaging scripts are in `.github/`.
+This repository builds the `input-overlay` OBS plugin and a headless input client. Plugin code is in `src/`: `gui/` contains Qt settings UI, `hook/` captures input, `network/` handles WebSocket traffic, and `util/` implements configuration and overlay elements. The client lives in `client/src/`. Dependencies are under `deps/`; avoid editing vendored code unless updating the dependency. Web assets and translations are in `data/`, while `presets/` contains user-facing overlay layouts. CI and packaging scripts are in `.github/`.
 
 ## Build, Test, and Development Commands
 
@@ -26,3 +26,5 @@ Exercise changed input paths, configuration persistence, and affected overlay pr
 ## Commit & Pull Request Guidelines
 
 Match the concise history format: `Area: Imperative summary` (for example, `Presets: Fix Switch Pro Controller` or `CI: Update buildspec`). Keep commits focused. Pull requests should explain the user-visible effect, link relevant issues, describe validation and platforms tested, and include screenshots or recordings for UI, overlay, or preset changes. Do not commit generated build directories, release artifacts, signing material, or local credentials.
+
+If `git push` is rejected for access, run `gh auth status`, then `gh auth switch` to an authorized account and retry.

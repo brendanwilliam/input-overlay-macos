@@ -468,6 +468,13 @@ public:
         right_label = QString::fromUtf8(obs_data_get_string(settings, "mouse_activity.right_label"));
         middle_label = QString::fromUtf8(obs_data_get_string(settings, "mouse_activity.middle_label"));
         show_coordinates = obs_data_get_bool(settings, "mouse_activity.show_coordinates");
+        coordinates_below =
+            std::string(obs_data_get_string(settings, "mouse_activity.coordinates_position")) == "below";
+        const std::string coordinates_alignment =
+            obs_data_get_string(settings, "mouse_activity.coordinates_alignment");
+        coordinate_alignment = coordinates_alignment == "left"      ? Qt::AlignLeft
+                               : coordinates_alignment == "right"   ? Qt::AlignRight
+                                                                       : Qt::AlignHCenter;
         heatmap_gradient = obs_data_get_string(settings, "mouse_activity.heatmap_gradient");
         trail_duration_ns = static_cast<uint64_t>(
             std::max<int64_t>(100, obs_data_get_int(settings, "mouse_activity.trail_ms")) * 1000 * 1000);
@@ -593,14 +600,17 @@ private:
         if (monitor.width <= 0 || monitor.height <= 0)
             return;
         const int content_width = std::max(1, width - padding * 2);
-        height = std::max(1, static_cast<int>(std::lround(content_width *
-                                                          static_cast<double>(monitor.height) / monitor.width)) +
-                                 padding * 2);
+        const int heatmap_height =
+            static_cast<int>(std::lround(content_width * static_cast<double>(monitor.height) / monitor.width));
+        height = std::max(1, heatmap_height + padding * 2 + coordinates_height());
     }
     QRect heatmap_rect() const
     {
-        return {padding, padding, std::max(1, width - padding * 2), std::max(1, height - padding * 2)};
+        const int coordinates_offset = show_coordinates && !coordinates_below ? coordinates_height() : 0;
+        return {padding, padding + coordinates_offset, std::max(1, width - padding * 2),
+                std::max(1, height - padding * 2 - coordinates_height())};
     }
+    int coordinates_height() const { return show_coordinates ? font_size : 0; }
     void build_hex_lattice()
     {
         hex_bins.clear();
@@ -776,17 +786,9 @@ private:
     void draw_coordinates(QPainter &painter, const QRect &heatmap) const
     {
         const QString label = QString("X: %1  Y: %2").arg(coordinates->x()).arg(coordinates->y());
-        const QFontMetrics metrics(painter.font());
-        constexpr int label_padding = 6;
-        constexpr int edge_padding = 4;
-        const QSize label_size(metrics.horizontalAdvance(label) + label_padding * 2,
-                               metrics.height() + label_padding * 2);
-        const QRect label_rect(heatmap.center().x() - label_size.width() / 2, heatmap.top() + edge_padding,
-                               label_size.width(), label_size.height());
-        painter.setBrush(QColor(0, 0, 0, 180));
-        painter.drawRoundedRect(label_rect, 4, 4);
-        draw_text(painter, label_rect.adjusted(label_padding, label_padding, -label_padding, -label_padding),
-                  Qt::AlignCenter, label, text_color);
+        const int coordinates_y = coordinates_below ? heatmap.bottom() + 1 : padding;
+        const QRect label_rect(padding, coordinates_y, std::max(1, width - padding * 2), coordinates_height());
+        draw_text(painter, label_rect, coordinate_alignment | Qt::AlignVCenter, label, text_color);
     }
     void draw_pointer(QPainter &painter) const
     {
@@ -836,7 +838,8 @@ private:
     std::unordered_map<uint16_t, QColor> button_colors{{MOUSE_BUTTON1, {37, 99, 235}},
                                                        {MOUSE_BUTTON2, {239, 68, 68}},
                                                        {MOUSE_BUTTON3, {250, 204, 21}}};
-    bool show_coordinates{}, show_border{}, show_center_mark{}, map_clicks{};
+    bool show_coordinates{}, coordinates_below{}, show_border{}, show_center_mark{}, map_clicks{};
+    Qt::Alignment coordinate_alignment{Qt::AlignHCenter};
     std::string heatmap_gradient{"spectrum"};
     uint64_t trail_duration_ns{1500ULL * 1000 * 1000};
     int display{};
@@ -1356,6 +1359,8 @@ template<typename T> void register_source(const char *id, const char *name, obs_
             obs_data_set_default_string(settings, "mouse_activity.right_label", "R");
             obs_data_set_default_string(settings, "mouse_activity.middle_label", "M");
             obs_data_set_default_bool(settings, "mouse_activity.show_coordinates", false);
+            obs_data_set_default_string(settings, "mouse_activity.coordinates_position", "above");
+            obs_data_set_default_string(settings, "mouse_activity.coordinates_alignment", "center");
             obs_data_set_default_bool(settings, "mouse_activity.show_border", false);
             obs_data_set_default_bool(settings, "mouse_activity.show_center_mark", false);
             obs_data_set_default_int(settings, "mouse_activity.trail_ms", 1500);
@@ -1419,6 +1424,24 @@ obs_properties_t *mouse_properties(void *data)
     obs_properties_add_color_alpha(p, "mouse_activity.right_color", obs_module_text("MouseActivity.RightColor"));
     obs_properties_add_color_alpha(p, "mouse_activity.middle_color", obs_module_text("MouseActivity.MiddleColor"));
     obs_properties_add_bool(p, "mouse_activity.show_coordinates", obs_module_text("MouseActivity.ShowCoordinates"));
+    auto *coordinates_position =
+        obs_properties_add_list(p, "mouse_activity.coordinates_position",
+                                obs_module_text("MouseActivity.CoordinatesPosition"), OBS_COMBO_TYPE_LIST,
+                                OBS_COMBO_FORMAT_STRING);
+    obs_property_list_add_string(coordinates_position, obs_module_text("MouseActivity.CoordinatesPosition.Above"),
+                                 "above");
+    obs_property_list_add_string(coordinates_position, obs_module_text("MouseActivity.CoordinatesPosition.Below"),
+                                 "below");
+    auto *coordinates_alignment =
+        obs_properties_add_list(p, "mouse_activity.coordinates_alignment",
+                                obs_module_text("MouseActivity.CoordinatesAlignment"), OBS_COMBO_TYPE_LIST,
+                                OBS_COMBO_FORMAT_STRING);
+    obs_property_list_add_string(coordinates_alignment, obs_module_text("MouseActivity.CoordinatesAlignment.Left"),
+                                 "left");
+    obs_property_list_add_string(coordinates_alignment,
+                                 obs_module_text("MouseActivity.CoordinatesAlignment.Center"), "center");
+    obs_property_list_add_string(coordinates_alignment, obs_module_text("MouseActivity.CoordinatesAlignment.Right"),
+                                 "right");
     obs_properties_add_bool(p, "mouse_activity.show_border", obs_module_text("MouseActivity.ShowBorder"));
     obs_properties_add_bool(p, "mouse_activity.show_center_mark", obs_module_text("MouseActivity.ShowCenterMark"));
     obs_properties_add_int_slider(p, "mouse_activity.trail_ms", obs_module_text("MouseActivity.TrailDuration"), 100,

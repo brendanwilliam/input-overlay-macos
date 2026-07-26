@@ -80,6 +80,19 @@ void migrate_legacy_colors(obs_data_t *settings)
     obs_data_set_bool(settings, "io.colors_with_alpha", true);
 }
 
+void draw_text_with_shadow(QPainter &painter, const QRect &rect, int alignment, const QString &text,
+                           const QColor &color, bool shadow_enabled, const QColor &shadow_color, int shadow_offset)
+{
+    if (shadow_enabled) {
+        QColor shadow = shadow_color;
+        shadow.setAlpha(shadow.alpha() * color.alpha() / 255);
+        painter.setPen(shadow);
+        painter.drawText(rect.translated(shadow_offset, shadow_offset), alignment, text);
+    }
+    painter.setPen(color);
+    painter.drawText(rect, alignment, text);
+}
+
 const bundled_preset *find_bundled_preset(const char *id)
 {
     for (const auto &preset : bundled_presets) {
@@ -157,6 +170,10 @@ public:
         m_pressed = color_from_obs(static_cast<uint32_t>(obs_data_get_int(settings, S_PROCEDURAL_PRESSED_COLOR)));
         m_border = color_from_obs(static_cast<uint32_t>(obs_data_get_int(settings, S_PROCEDURAL_BORDER_COLOR)));
         m_text = color_from_obs(static_cast<uint32_t>(obs_data_get_int(settings, S_PROCEDURAL_TEXT_COLOR)));
+        m_text_shadow = obs_data_get_bool(settings, S_PROCEDURAL_TEXT_SHADOW);
+        m_text_shadow_color =
+            color_from_obs(static_cast<uint32_t>(obs_data_get_int(settings, S_PROCEDURAL_TEXT_SHADOW_COLOR)));
+        m_text_shadow_offset = std::max(0, static_cast<int>(obs_data_get_int(settings, S_PROCEDURAL_TEXT_SHADOW_OFFSET)));
         parse_layout(QString::fromUtf8(obs_data_get_string(settings, S_PROCEDURAL_LAYOUT)));
     }
 
@@ -361,7 +378,8 @@ private:
             while (key_font.pixelSize() > 8 && QFontMetrics(key_font).horizontalAdvance(key.label) > rect.width() - 12)
                 key_font.setPixelSize(key_font.pixelSize() - 1);
             painter.setFont(key_font);
-            painter.drawText(rect, Qt::AlignCenter, key.label);
+            draw_text_with_shadow(painter, rect, Qt::AlignCenter, key.label, m_text, m_text_shadow,
+                                  m_text_shadow_color, m_text_shadow_offset);
             painter.setFont(font);
             painter.setPen(QPen(m_border, 2));
         }
@@ -383,6 +401,9 @@ private:
     QColor m_pressed = QColor(37, 99, 235);
     QColor m_border = QColor(148, 163, 184);
     QColor m_text = QColor(255, 255, 255);
+    bool m_text_shadow = false;
+    QColor m_text_shadow_color = QColor(0, 0, 0, 204);
+    int m_text_shadow_offset = 2;
     std::vector<key> m_keys;
     int m_columns = 7;
     int m_rows = 2;
@@ -425,6 +446,10 @@ public:
             color_from_obs(static_cast<uint32_t>(obs_data_get_int(settings, S_PROCEDURAL_MOUSE_PRESSED_COLOR)));
         m_border = color_from_obs(static_cast<uint32_t>(obs_data_get_int(settings, S_PROCEDURAL_MOUSE_BORDER_COLOR)));
         m_text = color_from_obs(static_cast<uint32_t>(obs_data_get_int(settings, S_PROCEDURAL_MOUSE_TEXT_COLOR)));
+        m_text_shadow = obs_data_get_bool(settings, S_PROCEDURAL_TEXT_SHADOW);
+        m_text_shadow_color =
+            color_from_obs(static_cast<uint32_t>(obs_data_get_int(settings, S_PROCEDURAL_TEXT_SHADOW_COLOR)));
+        m_text_shadow_offset = std::max(0, static_cast<int>(obs_data_get_int(settings, S_PROCEDURAL_TEXT_SHADOW_OFFSET)));
         m_left_label = QString::fromUtf8(obs_data_get_string(settings, S_PROCEDURAL_MOUSE_LEFT_LABEL));
         m_right_label = QString::fromUtf8(obs_data_get_string(settings, S_PROCEDURAL_MOUSE_RIGHT_LABEL));
         m_middle_label = QString::fromUtf8(obs_data_get_string(settings, S_PROCEDURAL_MOUSE_MIDDLE_LABEL));
@@ -476,8 +501,8 @@ private:
         while (button_font.pixelSize() > 8 && QFontMetrics(button_font).horizontalAdvance(label) > rect.width() - 12)
             button_font.setPixelSize(button_font.pixelSize() - 1);
         painter.setFont(button_font);
-        painter.setPen(m_text);
-        painter.drawText(rect, Qt::AlignCenter, label);
+        draw_text_with_shadow(painter, rect, Qt::AlignCenter, label, m_text, m_text_shadow, m_text_shadow_color,
+                              m_text_shadow_offset);
     }
 
     void render_image(const overlay_settings &settings)
@@ -527,6 +552,9 @@ private:
     QColor m_pressed = QColor(37, 99, 235);
     QColor m_border = QColor(148, 163, 184);
     QColor m_text = QColor(255, 255, 255);
+    bool m_text_shadow = false;
+    QColor m_text_shadow_color = QColor(0, 0, 0, 204);
+    int m_text_shadow_offset = 2;
     QString m_left_label = "LMB";
     QString m_right_label = "RMB";
     QString m_middle_label = "MMB";
@@ -772,6 +800,10 @@ obs_properties_t *get_properties_for_overlay(void *data)
     obs_properties_add_color_alpha(props, S_PROCEDURAL_PRESSED_COLOR, T_PROCEDURAL_PRESSED_COLOR);
     obs_properties_add_color_alpha(props, S_PROCEDURAL_BORDER_COLOR, T_PROCEDURAL_BORDER_COLOR);
     obs_properties_add_color_alpha(props, S_PROCEDURAL_TEXT_COLOR, T_PROCEDURAL_TEXT_COLOR);
+    obs_properties_add_bool(props, S_PROCEDURAL_TEXT_SHADOW, obs_module_text("Activity.TextShadow"));
+    obs_properties_add_color_alpha(props, S_PROCEDURAL_TEXT_SHADOW_COLOR, obs_module_text("Activity.TextShadowColor"));
+    obs_properties_add_int_slider(props, S_PROCEDURAL_TEXT_SHADOW_OFFSET, obs_module_text("Activity.TextShadowOffset"),
+                                  0, 20, 1);
     obs_properties_add_text(props, S_PROCEDURAL_LAYOUT, T_PROCEDURAL_LAYOUT, OBS_TEXT_MULTILINE);
 
     obs_properties_add_bool(props, S_PROCEDURAL_MOUSE_ENABLED, T_PROCEDURAL_MOUSE_ENABLED);
@@ -873,6 +905,9 @@ void register_overlay_source()
         obs_data_set_default_int(settings, S_PROCEDURAL_PRESSED_COLOR, 0xFFEB6325);
         obs_data_set_default_int(settings, S_PROCEDURAL_BORDER_COLOR, 0xFFB8A394);
         obs_data_set_default_int(settings, S_PROCEDURAL_TEXT_COLOR, 0xFFFFFFFF);
+        obs_data_set_default_bool(settings, S_PROCEDURAL_TEXT_SHADOW, false);
+        obs_data_set_default_int(settings, S_PROCEDURAL_TEXT_SHADOW_COLOR, 0xCC000000);
+        obs_data_set_default_int(settings, S_PROCEDURAL_TEXT_SHADOW_OFFSET, 2);
         obs_data_set_default_string(settings, S_PROCEDURAL_LAYOUT, " W     \nASD[LEFT][DOWN][RIGHT]");
         obs_data_set_default_bool(settings, S_PROCEDURAL_MOUSE_ENABLED, false);
         obs_data_set_default_int(settings, S_PROCEDURAL_MOUSE_WIDTH, 220);

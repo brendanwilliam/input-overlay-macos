@@ -85,6 +85,9 @@ public:
         padding = std::max(0, static_cast<int>(obs_data_get_int(settings, "activity.padding")));
         font_size = std::max(8, static_cast<int>(obs_data_get_int(settings, "activity.font_size")));
         text_color = obs_color(static_cast<uint32_t>(obs_data_get_int(settings, "activity.text_color")));
+        text_shadow = obs_data_get_bool(settings, "activity.text_shadow");
+        text_shadow_color = obs_color(static_cast<uint32_t>(obs_data_get_int(settings, "activity.text_shadow_color")));
+        text_shadow_offset = std::max(0, static_cast<int>(obs_data_get_int(settings, "activity.text_shadow_offset")));
         if (auto *font = obs_data_get_obj(settings, "activity.font")) {
             font_family = QString::fromUtf8(obs_data_get_string(font, "face"));
             obs_data_release(font);
@@ -171,9 +174,24 @@ public:
         result.setPixelSize(font_size);
         return result;
     }
+    void draw_text(QPainter &painter, const QRect &rect, int alignment, const QString &text,
+                   const QColor &color) const
+    {
+        if (text_shadow) {
+            QColor shadow = text_shadow_color;
+            shadow.setAlpha(shadow.alpha() * color.alpha() / 255);
+            painter.setPen(shadow);
+            painter.drawText(rect.translated(text_shadow_offset, text_shadow_offset), alignment, text);
+        }
+        painter.setPen(color);
+        painter.drawText(rect, alignment, text);
+    }
     obs_source_t *source{};
     int width = 480, height = 180, padding = 12, font_size = 28;
     QColor text_color{255, 255, 255};
+    QColor text_shadow_color{0, 0, 0, 204};
+    bool text_shadow{};
+    int text_shadow_offset{2};
     QString font_family;
     std::string selected_source;
     std::shared_ptr<input_data> remote;
@@ -396,8 +414,7 @@ public:
             painter.setBrush(fill);
             painter.setPen(Qt::NoPen);
             painter.drawRoundedRect(row, 6, 6);
-            painter.setPen(text);
-            painter.drawText(row, Qt::AlignCenter, QString("%1\n%2").arg(key.label).arg(key.press_count));
+            draw_text(painter, row, Qt::AlignCenter, QString("%1\n%2").arg(key.label).arg(key.press_count), text);
         }
     }
 
@@ -766,11 +783,10 @@ private:
                                metrics.height() + label_padding * 2);
         const QRect label_rect(heatmap.center().x() - label_size.width() / 2, heatmap.top() + edge_padding,
                                label_size.width(), label_size.height());
-        painter.setPen(text_color);
         painter.setBrush(QColor(0, 0, 0, 180));
         painter.drawRoundedRect(label_rect, 4, 4);
-        painter.drawText(label_rect.adjusted(label_padding, label_padding, -label_padding, -label_padding),
-                         Qt::AlignCenter, label);
+        draw_text(painter, label_rect.adjusted(label_padding, label_padding, -label_padding, -label_padding),
+                  Qt::AlignCenter, label, text_color);
     }
     void draw_pointer(QPainter &painter) const
     {
@@ -812,9 +828,8 @@ private:
         QColor label_background = color;
         label_background.setAlpha(220);
         painter.setBrush(label_background);
-        painter.setPen(text_color);
         painter.drawRoundedRect(label_rect, 4, 4);
-        painter.drawText(label_rect, Qt::AlignCenter, label);
+        draw_text(painter, label_rect, Qt::AlignCenter, label, text_color);
     }
     QString left_label{"L"}, right_label{"R"}, middle_label{"M"};
     QColor active_color{37, 99, 235};
@@ -909,7 +924,6 @@ public:
     void render(QPainter &painter) override
     {
         painter.setFont(font());
-        painter.setPen(text_color);
         QStringList lines;
         QStringList key_metrics;
         if (show_key_rate)
@@ -945,8 +959,8 @@ public:
         }
 
         const Qt::Alignment alignment = lines.isEmpty() ? Qt::AlignCenter : Qt::AlignLeft | Qt::AlignVCenter;
-        painter.drawText(QRect(padding, padding, width - padding * 2, height - padding * 2), alignment,
-                         lines.isEmpty() ? obs_module_text("Statistics.NoMetrics") : lines.join('\n'));
+        draw_text(painter, QRect(padding, padding, width - padding * 2, height - padding * 2), alignment,
+                  lines.isEmpty() ? obs_module_text("Statistics.NoMetrics") : lines.join('\n'), text_color);
     }
     void reset_activity() override
     {
@@ -1088,9 +1102,8 @@ public:
                 active_rows.push_back(index);
         if (active_rows.empty()) {
             painter.setFont(font());
-            painter.setPen(text_color);
-            painter.drawText(QRect(padding, padding, width - padding * 2, height - padding * 2), Qt::AlignCenter,
-                             obs_module_text("InputIntensity.NoMetrics"));
+            draw_text(painter, QRect(padding, padding, width - padding * 2, height - padding * 2), Qt::AlignCenter,
+                      obs_module_text("InputIntensity.NoMetrics"), text_color);
             return;
         }
 
@@ -1111,8 +1124,7 @@ public:
                                    std::max(1, row_rect.height() - label_height - value_label_height - 4));
             const QRect value_label_rect(row_rect.left(), chart_rect.bottom() + 1, row_rect.width(),
                                          value_label_height + 1);
-            painter.setPen(text_color);
-            painter.drawText(label_rect, Qt::AlignLeft | Qt::AlignTop, row_label(rows[row_index]));
+            draw_text(painter, label_rect, Qt::AlignLeft | Qt::AlignTop, row_label(rows[row_index]), text_color);
             draw_box_plot(painter, chart_rect, value_label_rect, row_index);
         }
     }
@@ -1235,9 +1247,8 @@ private:
 
         const QString min_label = number_label(minimum);
         const QString max_label = number_label(maximum);
-        painter.setPen(text_color);
-        painter.drawText(value_label_rect, Qt::AlignLeft | Qt::AlignVCenter, min_label);
-        painter.drawText(value_label_rect, Qt::AlignRight | Qt::AlignVCenter, max_label);
+        draw_text(painter, value_label_rect, Qt::AlignLeft | Qt::AlignVCenter, min_label, text_color);
+        draw_text(painter, value_label_rect, Qt::AlignRight | Qt::AlignVCenter, max_label, text_color);
     }
 
     double current_rate(size_t row_index) const
@@ -1296,6 +1307,10 @@ void add_common_properties(obs_properties_t *props, bool allow_height = true)
     obs_properties_add_font(props, "activity.font", obs_module_text("Activity.Font"));
     obs_properties_add_int(props, "activity.font_size", obs_module_text("Activity.FontSize"), 8, 256, 1);
     obs_properties_add_color_alpha(props, "activity.text_color", obs_module_text("Activity.TextColor"));
+    obs_properties_add_bool(props, "activity.text_shadow", obs_module_text("Activity.TextShadow"));
+    obs_properties_add_color_alpha(props, "activity.text_shadow_color", obs_module_text("Activity.TextShadowColor"));
+    obs_properties_add_int_slider(props, "activity.text_shadow_offset", obs_module_text("Activity.TextShadowOffset"),
+                                  0, 20, 1);
 }
 template<typename T> void register_source(const char *id, const char *name, obs_properties_t *(*properties)(void *))
 {
@@ -1327,6 +1342,9 @@ template<typename T> void register_source(const char *id, const char *name, obs_
         obs_data_set_default_int(settings, "activity.padding", 16);
         obs_data_set_default_int(settings, "activity.font_size", 36);
         obs_data_set_default_int(settings, "activity.text_color", 0xffffffff);
+        obs_data_set_default_bool(settings, "activity.text_shadow", false);
+        obs_data_set_default_int(settings, "activity.text_shadow_color", 0xcc000000);
+        obs_data_set_default_int(settings, "activity.text_shadow_offset", 2);
         if constexpr (std::is_same_v<T, live_keys_source>) {
             obs_data_set_default_int(settings, "live_keys.maximum", 8);
             obs_data_set_default_bool(settings, "live_keys.row_layout", false);

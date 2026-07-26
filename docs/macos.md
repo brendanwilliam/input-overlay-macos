@@ -84,7 +84,8 @@ show this Mac or an input client connected over the trusted local WebSocket conn
 
 - **Live Keys** lists held physical keys in press order, with each key's session press count. Repeated key-down events
   do not add duplicate entries. Enable **Show keys in a row** for a horizontal key strip; the source width and height
-  determine the resulting key sizes. Set **Maximum visible keys** to reserve a stable transparent area for the list.
+  determine the resulting key sizes. **Maximum visible keys** fixes the number of equal-width row slots, leaving
+  unused slots transparent.
 - **Mouse Activity** shows left, middle, and right button states in a mouse-like strip and a circular cursor with a
   fading, tapered trail. The trail shows 1.5 seconds by default and its duration can be adjusted. It includes a
   session dwell-time hexbin heatmap. Optional coordinates appear above the tracker, while the button strip is below it
@@ -95,8 +96,9 @@ show this Mac or an input client connected over the trusted local WebSocket conn
 - **Input Statistics** reports the preceding 60 seconds of distinct key-down events (KPM), left/right/middle
   button-down events (CPM), and their sum (APM), plus session totals for keys, clicks, and actions. Scrolling and
   motion are not actions. Distance is the accumulated distance between captured mouse motion points, shown in pixels
-  and inches using the configured mouse DPI. Configure **Reset Input Statistics** in OBS Hotkeys; it resets only that
-  source's rates, totals, and distance, not a Mouse Activity heatmap.
+  and inches using the configured mouse DPI. Configure **Reset Activity Statistics** in OBS Hotkeys; it resets the
+  rates, totals, and distance for every Input Statistics source, the session press counts in every Live Keys source,
+  and the heatmap and trail in every Mouse Activity source.
 
 To remove a source or release installation, quit OBS and delete:
 

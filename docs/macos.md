@@ -84,8 +84,9 @@ show this Mac or an input client connected over the trusted local WebSocket conn
 
 - **Live Keys** lists held physical keys in press order. Repeated key-down events do not add duplicate rows. Set
   **Maximum visible keys** to reserve a stable transparent area for the list.
-- **Mouse Activity** shows left, middle, and right button states in a mouse-like strip, a three-second cursor trail,
-  and a session dwell-time heatmap. The compact, unlabeled middle button can be hidden. The heatmap groups visited
+- **Mouse Activity** shows left, middle, and right button states in a mouse-like strip and a circular cursor with a
+  fading comet trail. The trail shows 1.5 seconds by default and its duration can be adjusted. It includes a session
+  dwell-time heatmap. The compact, unlabeled middle button can be hidden. The heatmap groups visited
   display regions into blue, cyan, yellow, and red dwell-time quartiles, from least to most hovered, and persists
   until **Clear heatmap** is pressed. Optionally show integer X/Y coordinates relative to the selected display's
   top-left corner; they update only while the cursor is inside that display.

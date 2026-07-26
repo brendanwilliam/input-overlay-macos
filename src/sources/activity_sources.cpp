@@ -9,6 +9,7 @@
 #include <QImage>
 #include <QPainter>
 #include <QPainterPath>
+#include <QStringList>
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -38,7 +39,19 @@ constexpr qreal heatmap_hex_radius = 10.0;
 QColor obs_color(uint32_t color)
 {
     return {static_cast<int>(color & 0xff), static_cast<int>((color >> 8) & 0xff),
-            static_cast<int>((color >> 16) & 0xff)};
+            static_cast<int>((color >> 16) & 0xff), static_cast<int>((color >> 24) & 0xff)};
+}
+
+void migrate_legacy_colors(obs_data_t *settings, const char *migration_key,
+                           std::initializer_list<const char *> color_keys)
+{
+    if (obs_data_get_bool(settings, migration_key))
+        return;
+    for (const char *color_key : color_keys) {
+        const uint32_t color = static_cast<uint32_t>(obs_data_get_int(settings, color_key));
+        obs_data_set_int(settings, color_key, color | 0xff000000);
+    }
+    obs_data_set_bool(settings, migration_key, true);
 }
 
 class activity_source {
@@ -65,12 +78,16 @@ public:
     }
     virtual void update(obs_data_t *settings)
     {
+        migrate_legacy_colors(settings, "activity.colors_with_alpha", {"activity.text_color"});
         selected_source = obs_data_get_string(settings, S_INPUT_SOURCE);
         width = std::max(1, static_cast<int>(obs_data_get_int(settings, "activity.width")));
         height = std::max(1, static_cast<int>(obs_data_get_int(settings, "activity.height")));
         padding = std::max(0, static_cast<int>(obs_data_get_int(settings, "activity.padding")));
         font_size = std::max(8, static_cast<int>(obs_data_get_int(settings, "activity.font_size")));
         text_color = obs_color(static_cast<uint32_t>(obs_data_get_int(settings, "activity.text_color")));
+        text_shadow = obs_data_get_bool(settings, "activity.text_shadow");
+        text_shadow_color = obs_color(static_cast<uint32_t>(obs_data_get_int(settings, "activity.text_shadow_color")));
+        text_shadow_offset = std::max(0, static_cast<int>(obs_data_get_int(settings, "activity.text_shadow_offset")));
         if (auto *font = obs_data_get_obj(settings, "activity.font")) {
             font_family = QString::fromUtf8(obs_data_get_string(font, "face"));
             obs_data_release(font);
@@ -157,9 +174,24 @@ public:
         result.setPixelSize(font_size);
         return result;
     }
+    void draw_text(QPainter &painter, const QRect &rect, int alignment, const QString &text,
+                   const QColor &color) const
+    {
+        if (text_shadow) {
+            QColor shadow = text_shadow_color;
+            shadow.setAlpha(shadow.alpha() * color.alpha() / 255);
+            painter.setPen(shadow);
+            painter.drawText(rect.translated(text_shadow_offset, text_shadow_offset), alignment, text);
+        }
+        painter.setPen(color);
+        painter.drawText(rect, alignment, text);
+    }
     obs_source_t *source{};
     int width = 480, height = 180, padding = 12, font_size = 28;
     QColor text_color{255, 255, 255};
+    QColor text_shadow_color{0, 0, 0, 204};
+    bool text_shadow{};
+    int text_shadow_offset{2};
     QString font_family;
     std::string selected_source;
     std::shared_ptr<input_data> remote;
@@ -284,14 +316,26 @@ QString key_name(const input_data::trace_event &event)
 
 class live_keys_source final : public activity_source {
 public:
+    enum class fade_curve { linear, ease_in, ease_out, ease_in_out };
+
     using activity_source::activity_source;
     void update(obs_data_t *settings) override
     {
         activity_source::update(settings);
+        migrate_legacy_colors(settings, "live_keys.colors_with_alpha", {"live_keys.color"});
         maximum = std::max(1, static_cast<int>(obs_data_get_int(settings, "live_keys.maximum")));
         row_layout = obs_data_get_bool(settings, "live_keys.row_layout");
         fade_duration_ns =
             static_cast<uint64_t>(std::max<int64_t>(0, obs_data_get_int(settings, "live_keys.fade_ms"))) * 1000 * 1000;
+        const std::string curve = obs_data_get_string(settings, "live_keys.fade_curve");
+        if (curve == "ease_in")
+            fade = fade_curve::ease_in;
+        else if (curve == "ease_out")
+            fade = fade_curve::ease_out;
+        else if (curve == "ease_in_out")
+            fade = fade_curve::ease_in_out;
+        else
+            fade = fade_curve::linear;
         active_color = obs_color(static_cast<uint32_t>(obs_data_get_int(settings, "live_keys.color")));
     }
     void on_event(const input_data::trace_event &event) override
@@ -337,13 +381,19 @@ public:
             }
         }
     }
+    void reset_activity() override
+    {
+        press_counts.clear();
+        for (auto &key : ordered)
+            key.press_count = 0;
+    }
     void render(QPainter &painter) override
     {
         painter.setFont(font());
         const int start = std::max(0, static_cast<int>(ordered.size()) - maximum);
         const int visible = static_cast<int>(ordered.size()) - start;
         const int gap = 2;
-        const int key_width = row_layout ? std::max(1, (width - padding * 2 - gap * (visible - 1)) / std::max(1, visible))
+        const int key_width = row_layout ? std::max(1, (width - padding * 2 - gap * (maximum - 1)) / maximum)
                                          : std::max(1, width - padding * 2);
         const int key_height = row_layout ? std::max(1, height - padding * 2)
                                           : std::max(1, (height - padding * 2) / maximum - gap);
@@ -354,7 +404,8 @@ public:
                             row_layout ? padding : padding + position * (key_height + gap), key_width, key_height);
             const auto &key = ordered[index];
             const int alpha = key.fade_until > now && fade_duration_ns > 0
-                                  ? static_cast<int>(255 * static_cast<double>(key.fade_until - now) / fade_duration_ns)
+                                  ? static_cast<int>(255 * fade_alpha(
+                                                                static_cast<double>(key.fade_until - now) / fade_duration_ns))
                                   : (key.fade_until ? 0 : 255);
             QColor fill = active_color;
             fill.setAlpha(std::clamp(alpha, 0, 255));
@@ -363,12 +414,30 @@ public:
             painter.setBrush(fill);
             painter.setPen(Qt::NoPen);
             painter.drawRoundedRect(row, 6, 6);
-            painter.setPen(text);
-            painter.drawText(row, Qt::AlignCenter, QString("%1\n%2").arg(key.label).arg(key.press_count));
+            draw_text(painter, row, Qt::AlignCenter, QString("%1\n%2").arg(key.label).arg(key.press_count), text);
         }
     }
 
 private:
+    double fade_alpha(double remaining) const
+    {
+        remaining = std::clamp(remaining, 0.0, 1.0);
+        switch (fade) {
+        case fade_curve::ease_in:
+            return 1.0 - (1.0 - remaining) * (1.0 - remaining);
+        case fade_curve::ease_out:
+            return remaining * remaining;
+        case fade_curve::ease_in_out: {
+            const double elapsed = 1.0 - remaining;
+            const double eased_elapsed = elapsed < 0.5 ? 2.0 * elapsed * elapsed
+                                                        : 1.0 - std::pow(-2.0 * elapsed + 2.0, 2.0) / 2.0;
+            return 1.0 - eased_elapsed;
+        }
+        case fade_curve::linear:
+            return remaining;
+        }
+        return remaining;
+    }
     struct active_key {
         uint16_t code;
         QString label;
@@ -377,6 +446,7 @@ private:
     };
     int maximum = 8;
     uint64_t fade_duration_ns = 300ULL * 1000 * 1000;
+    fade_curve fade{fade_curve::linear};
     QColor active_color{37, 99, 235};
     std::unordered_map<uint16_t, bool> held;
     std::unordered_map<uint16_t, uint64_t> press_counts;
@@ -391,10 +461,20 @@ public:
     {
         const QRect previous_heatmap = heatmap_rect();
         activity_source::update(settings);
+        migrate_legacy_colors(settings, "mouse_activity.colors_with_alpha",
+                              {"mouse_activity.color", "mouse_activity.left_color", "mouse_activity.right_color",
+                               "mouse_activity.middle_color"});
         left_label = QString::fromUtf8(obs_data_get_string(settings, "mouse_activity.left_label"));
         right_label = QString::fromUtf8(obs_data_get_string(settings, "mouse_activity.right_label"));
         middle_label = QString::fromUtf8(obs_data_get_string(settings, "mouse_activity.middle_label"));
         show_coordinates = obs_data_get_bool(settings, "mouse_activity.show_coordinates");
+        coordinates_below =
+            std::string(obs_data_get_string(settings, "mouse_activity.coordinates_position")) == "below";
+        const std::string coordinates_alignment =
+            obs_data_get_string(settings, "mouse_activity.coordinates_alignment");
+        coordinate_alignment = coordinates_alignment == "left"      ? Qt::AlignLeft
+                               : coordinates_alignment == "right"   ? Qt::AlignRight
+                                                                       : Qt::AlignHCenter;
         heatmap_gradient = obs_data_get_string(settings, "mouse_activity.heatmap_gradient");
         trail_duration_ns = static_cast<uint64_t>(
             std::max<int64_t>(100, obs_data_get_int(settings, "mouse_activity.trail_ms")) * 1000 * 1000);
@@ -415,6 +495,9 @@ public:
         map_clicks = new_map_clicks;
         display = new_display;
         load_display();
+        update_dimensions();
+        show_border = obs_data_get_bool(settings, "mouse_activity.show_border");
+        show_center_mark = obs_data_get_bool(settings, "mouse_activity.show_center_mark");
         resize_heatmap();
         if (display_changed || heatmap_rect() != previous_heatmap)
             trail.clear();
@@ -424,6 +507,11 @@ public:
         for (auto &bin : hex_bins)
             bin.value = 0;
         last_motion.reset();
+    }
+    void reset_activity() override
+    {
+        clear();
+        trail.clear();
     }
     void on_event(const input_data::trace_event &event) override
     {
@@ -482,13 +570,11 @@ public:
         const QRect heatmap = heatmap_rect();
         draw_heatmap(painter, heatmap);
         draw_trail(painter, os_gettime_ns());
+        draw_screen_guides(painter, heatmap);
         painter.setFont(font());
         draw_pointer(painter);
-        if (show_coordinates && coordinates) {
-            painter.setPen(text_color);
-            painter.drawText(coordinate_rect(), Qt::AlignBottom | Qt::AlignHCenter,
-                             QString("X: %1  Y: %2").arg(coordinates->x()).arg(coordinates->y()));
-        }
+        if (show_coordinates && coordinates)
+            draw_coordinates(painter, heatmap);
     }
 
 private:
@@ -509,12 +595,22 @@ private:
         build_hex_lattice();
         last_motion.reset();
     }
-    QRect coordinate_rect() const { return {padding, padding, width - padding * 2, font_size}; }
+    void update_dimensions()
+    {
+        if (monitor.width <= 0 || monitor.height <= 0)
+            return;
+        const int content_width = std::max(1, width - padding * 2);
+        const int heatmap_height =
+            static_cast<int>(std::lround(content_width * static_cast<double>(monitor.height) / monitor.width));
+        height = std::max(1, heatmap_height + padding * 2 + coordinates_height());
+    }
     QRect heatmap_rect() const
     {
-        const int top = show_coordinates ? coordinate_rect().bottom() + padding + 1 : padding;
-        return {padding, top, std::max(1, width - padding * 2), std::max(1, height - padding - top)};
+        const int coordinates_offset = show_coordinates && !coordinates_below ? coordinates_height() : 0;
+        return {padding, padding + coordinates_offset, std::max(1, width - padding * 2),
+                std::max(1, height - padding * 2 - coordinates_height())};
     }
+    int coordinates_height() const { return show_coordinates ? font_size : 0; }
     void build_hex_lattice()
     {
         hex_bins.clear();
@@ -594,7 +690,7 @@ private:
             }
             const double strength = 1.0 - (band + 0.5) / 4.0;
             QPen pen(QColor(active_color.red(), active_color.green(), active_color.blue(),
-                            static_cast<int>(180 * strength * strength)));
+                            static_cast<int>(active_color.alpha() * 180.0 / 255.0 * strength * strength)));
             pen.setWidthF(2.0 + 6.0 * strength);
             pen.setCapStyle(Qt::FlatCap);
             pen.setJoinStyle(Qt::RoundJoin);
@@ -668,6 +764,32 @@ private:
         else
             monitor = {};
     }
+    void draw_screen_guides(QPainter &painter, const QRect &rect) const
+    {
+        if (!show_border && !show_center_mark)
+            return;
+        painter.save();
+        QPen pen(text_color, 1.5);
+        pen.setCapStyle(Qt::RoundCap);
+        painter.setPen(pen);
+        painter.setBrush(Qt::NoBrush);
+        if (show_border)
+            painter.drawRect(rect.adjusted(0, 0, -1, -1));
+        if (show_center_mark) {
+            const QPointF center = rect.center();
+            constexpr qreal crosshair_radius = 8.0;
+            painter.drawLine(center - QPointF(crosshair_radius, 0), center + QPointF(crosshair_radius, 0));
+            painter.drawLine(center - QPointF(0, crosshair_radius), center + QPointF(0, crosshair_radius));
+        }
+        painter.restore();
+    }
+    void draw_coordinates(QPainter &painter, const QRect &heatmap) const
+    {
+        const QString label = QString("X: %1  Y: %2").arg(coordinates->x()).arg(coordinates->y());
+        const int coordinates_y = coordinates_below ? heatmap.bottom() + 1 : padding;
+        const QRect label_rect(padding, coordinates_y, std::max(1, width - padding * 2), coordinates_height());
+        draw_text(painter, label_rect, coordinate_alignment | Qt::AlignVCenter, label, text_color);
+    }
     void draw_pointer(QPainter &painter) const
     {
         if (!coordinates || monitor.width == 0 || monitor.height == 0)
@@ -708,16 +830,16 @@ private:
         QColor label_background = color;
         label_background.setAlpha(220);
         painter.setBrush(label_background);
-        painter.setPen(text_color);
         painter.drawRoundedRect(label_rect, 4, 4);
-        painter.drawText(label_rect, Qt::AlignCenter, label);
+        draw_text(painter, label_rect, Qt::AlignCenter, label, text_color);
     }
     QString left_label{"L"}, right_label{"R"}, middle_label{"M"};
     QColor active_color{37, 99, 235};
     std::unordered_map<uint16_t, QColor> button_colors{{MOUSE_BUTTON1, {37, 99, 235}},
                                                        {MOUSE_BUTTON2, {239, 68, 68}},
                                                        {MOUSE_BUTTON3, {250, 204, 21}}};
-    bool show_coordinates{}, map_clicks{};
+    bool show_coordinates{}, coordinates_below{}, show_border{}, show_center_mark{}, map_clicks{};
+    Qt::Alignment coordinate_alignment{Qt::AlignHCenter};
     std::string heatmap_gradient{"spectrum"};
     uint64_t trail_duration_ns{1500ULL * 1000 * 1000};
     int display{};
@@ -748,6 +870,16 @@ public:
     {
         activity_source::update(settings);
         mouse_dpi = std::max<int64_t>(1, obs_data_get_int(settings, "statistics.mouse_dpi"));
+        distance_unit = obs_data_get_string(settings, "statistics.distance_unit");
+        if (distance_unit != "in" && distance_unit != "cm")
+            distance_unit = "px";
+        show_key_rate = obs_data_get_bool(settings, "statistics.show_key_rate");
+        show_total_keys = obs_data_get_bool(settings, "statistics.show_total_keys");
+        show_click_rate = obs_data_get_bool(settings, "statistics.show_click_rate");
+        show_total_clicks = obs_data_get_bool(settings, "statistics.show_total_clicks");
+        show_action_rate = obs_data_get_bool(settings, "statistics.show_action_rate");
+        show_total_actions = obs_data_get_bool(settings, "statistics.show_total_actions");
+        show_distance = obs_data_get_bool(settings, "statistics.show_distance");
     }
     void on_event(const input_data::trace_event &event) override
     {
@@ -795,19 +927,43 @@ public:
     void render(QPainter &painter) override
     {
         painter.setFont(font());
-        painter.setPen(text_color);
-        const QString text = QString("KPM: %1  Total keys: %2\nCPM: %3  Total clicks: %4\nAPM: %5  Total actions: %6\n"
-                                     "Distance: %7 px (%8 in)")
-                                 .arg(keys.size())
-                                 .arg(total_keys)
-                                 .arg(clicks.size())
-                                 .arg(total_clicks)
-                                 .arg(keys.size() + clicks.size())
-                                 .arg(total_keys + total_clicks)
-                                 .arg(distance, 0, 'f', 0)
-                                 .arg(distance / mouse_dpi, 0, 'f', 2);
-        painter.drawText(QRect(padding, padding, width - padding * 2, height - padding * 2),
-                         Qt::AlignLeft | Qt::AlignVCenter, text);
+        QStringList lines;
+        QStringList key_metrics;
+        if (show_key_rate)
+            key_metrics.append(QString("KPM: %1").arg(keys.size()));
+        if (show_total_keys)
+            key_metrics.append(QString("Total keys: %1").arg(total_keys));
+        if (!key_metrics.isEmpty())
+            lines.append(key_metrics.join("  "));
+
+        QStringList click_metrics;
+        if (show_click_rate)
+            click_metrics.append(QString("CPM: %1").arg(clicks.size()));
+        if (show_total_clicks)
+            click_metrics.append(QString("Total clicks: %1").arg(total_clicks));
+        if (!click_metrics.isEmpty())
+            lines.append(click_metrics.join("  "));
+
+        QStringList action_metrics;
+        if (show_action_rate)
+            action_metrics.append(QString("APM: %1").arg(keys.size() + clicks.size()));
+        if (show_total_actions)
+            action_metrics.append(QString("Total actions: %1").arg(total_keys + total_clicks));
+        if (!action_metrics.isEmpty())
+            lines.append(action_metrics.join("  "));
+
+        if (show_distance) {
+            if (distance_unit == "in")
+                lines.append(QString("Distance: %1 in").arg(distance / mouse_dpi, 0, 'f', 2));
+            else if (distance_unit == "cm")
+                lines.append(QString("Distance: %1 cm").arg(distance / mouse_dpi * 2.54, 0, 'f', 2));
+            else
+                lines.append(QString("Distance: %1 px").arg(distance, 0, 'f', 0));
+        }
+
+        const Qt::Alignment alignment = lines.isEmpty() ? Qt::AlignCenter : Qt::AlignLeft | Qt::AlignVCenter;
+        draw_text(painter, QRect(padding, padding, width - padding * 2, height - padding * 2), alignment,
+                  lines.isEmpty() ? obs_module_text("Statistics.NoMetrics") : lines.join('\n'), text_color);
     }
     void reset_activity() override
     {
@@ -826,6 +982,9 @@ private:
     double distance{};
     uint64_t total_keys{}, total_clicks{};
     int64_t mouse_dpi{800};
+    std::string distance_unit{"px"};
+    bool show_key_rate{true}, show_total_keys{true}, show_click_rate{true}, show_total_clicks{true};
+    bool show_action_rate{true}, show_total_actions{true}, show_distance{true};
     std::optional<input_data::trace_event> last_motion;
 };
 
@@ -853,6 +1012,7 @@ public:
     void update(obs_data_t *settings) override
     {
         activity_source::update(settings);
+        migrate_legacy_colors(settings, "input_intensity.colors_with_alpha", {"input_intensity.color"});
 
         const int new_window =
             std::clamp(static_cast<int>(obs_data_get_int(settings, "input_intensity.window")), 1, 60);
@@ -945,17 +1105,13 @@ public:
                 active_rows.push_back(index);
         if (active_rows.empty()) {
             painter.setFont(font());
-            painter.setPen(text_color);
-            painter.drawText(QRect(padding, padding, width - padding * 2, height - padding * 2), Qt::AlignCenter,
-                             obs_module_text("InputIntensity.NoMetrics"));
+            draw_text(painter, QRect(padding, padding, width - padding * 2, height - padding * 2), Qt::AlignCenter,
+                      obs_module_text("InputIntensity.NoMetrics"), text_color);
             return;
         }
 
         const QRect bounds(padding, padding, std::max(1, width - padding * 2), std::max(1, height - padding * 2));
         const int row_height = std::max(1, bounds.height() / static_cast<int>(active_rows.size()));
-        const int label_width = std::min(150, std::max(70, bounds.width() / 3));
-        const int chart_left = bounds.left() + label_width + 8;
-        const int chart_width = std::max(24, bounds.right() - chart_left + 1);
         QFont row_font = font();
         row_font.setPixelSize(std::clamp(row_height / 3, 9, font_size));
         painter.setFont(row_font);
@@ -964,13 +1120,14 @@ public:
             const size_t row_index = active_rows[visible_index];
             const QRect row_rect(bounds.left(), bounds.top() + static_cast<int>(visible_index) * row_height,
                                  bounds.width(), row_height);
-            const QRect label_rect(row_rect.left(), row_rect.top(), label_width, row_rect.height());
+            const int label_height = std::max(1, std::min(row_rect.height() / 3, row_font.pixelSize() + 2));
             const int value_label_height = std::max(1, std::min(row_rect.height() / 3, row_font.pixelSize() + 2));
-            const QRect chart_rect(chart_left, row_rect.top() + 2, chart_width,
-                                   std::max(1, row_rect.height() - value_label_height - 4));
-            const QRect value_label_rect(chart_left, chart_rect.bottom() + 1, chart_width, value_label_height + 1);
-            painter.setPen(text_color);
-            painter.drawText(label_rect, Qt::AlignLeft | Qt::AlignVCenter, row_label(rows[row_index]));
+            const QRect label_rect(row_rect.left(), row_rect.top(), row_rect.width(), label_height);
+            const QRect chart_rect(row_rect.left(), label_rect.bottom() + 3, row_rect.width(),
+                                   std::max(1, row_rect.height() - label_height - value_label_height - 4));
+            const QRect value_label_rect(row_rect.left(), chart_rect.bottom() + 1, row_rect.width(),
+                                         value_label_height + 1);
+            draw_text(painter, label_rect, Qt::AlignLeft | Qt::AlignTop, row_label(rows[row_index]), text_color);
             draw_box_plot(painter, chart_rect, value_label_rect, row_index);
         }
     }
@@ -1093,9 +1250,8 @@ private:
 
         const QString min_label = number_label(minimum);
         const QString max_label = number_label(maximum);
-        painter.setPen(text_color);
-        painter.drawText(value_label_rect, Qt::AlignLeft | Qt::AlignVCenter, min_label);
-        painter.drawText(value_label_rect, Qt::AlignRight | Qt::AlignVCenter, max_label);
+        draw_text(painter, value_label_rect, Qt::AlignLeft | Qt::AlignVCenter, min_label, text_color);
+        draw_text(painter, value_label_rect, Qt::AlignRight | Qt::AlignVCenter, max_label, text_color);
     }
 
     double current_rate(size_t row_index) const
@@ -1135,18 +1291,29 @@ bool reload_connections(obs_properties_t *, obs_property_t *property, void *)
         obs_property_list_add_string(property, connection.first.c_str(), connection.first.c_str());
     return true;
 }
-void add_common_properties(obs_properties_t *props)
+bool distance_unit_changed(obs_properties_t *props, obs_property_t *, obs_data_t *settings)
+{
+    const std::string unit = obs_data_get_string(settings, "statistics.distance_unit");
+    obs_property_set_visible(obs_properties_get(props, "statistics.mouse_dpi"), unit != "px");
+    return true;
+}
+void add_common_properties(obs_properties_t *props, bool allow_height = true)
 {
     auto *list = obs_properties_add_list(props, S_INPUT_SOURCE, T_INPUT_SOURCE, OBS_COMBO_TYPE_EDITABLE,
                                          OBS_COMBO_FORMAT_STRING);
     reload_connections(nullptr, list, nullptr);
     obs_properties_add_button(props, S_RELOAD_CONNECTIONS, T_RELOAD_CONNECTIONS, reload_connections);
     obs_properties_add_int(props, "activity.width", obs_module_text("Activity.Width"), 64, 3840, 1);
-    obs_properties_add_int(props, "activity.height", obs_module_text("Activity.Height"), 32, 2160, 1);
+    if (allow_height)
+        obs_properties_add_int(props, "activity.height", obs_module_text("Activity.Height"), 32, 2160, 1);
     obs_properties_add_int(props, "activity.padding", obs_module_text("Activity.Padding"), 0, 200, 1);
     obs_properties_add_font(props, "activity.font", obs_module_text("Activity.Font"));
     obs_properties_add_int(props, "activity.font_size", obs_module_text("Activity.FontSize"), 8, 256, 1);
-    obs_properties_add_color(props, "activity.text_color", obs_module_text("Activity.TextColor"));
+    obs_properties_add_color_alpha(props, "activity.text_color", obs_module_text("Activity.TextColor"));
+    obs_properties_add_bool(props, "activity.text_shadow", obs_module_text("Activity.TextShadow"));
+    obs_properties_add_color_alpha(props, "activity.text_shadow_color", obs_module_text("Activity.TextShadowColor"));
+    obs_properties_add_int_slider(props, "activity.text_shadow_offset", obs_module_text("Activity.TextShadowOffset"),
+                                  0, 20, 1);
 }
 template<typename T> void register_source(const char *id, const char *name, obs_properties_t *(*properties)(void *))
 {
@@ -1173,30 +1340,49 @@ template<typename T> void register_source(const char *id, const char *name, obs_
     info.get_height = [](void *data) { return static_cast<uint32_t>(static_cast<T *>(data)->height); };
     info.get_properties = properties;
     info.get_defaults = [](obs_data_t *settings) {
-        obs_data_set_default_int(settings, "activity.width", 480);
-        obs_data_set_default_int(settings, "activity.height", 180);
-        obs_data_set_default_int(settings, "activity.padding", 12);
-        obs_data_set_default_int(settings, "activity.font_size", 28);
-        obs_data_set_default_int(settings, "activity.text_color", 0xffffff);
+        obs_data_set_default_int(settings, "activity.width", 640);
+        obs_data_set_default_int(settings, "activity.height", 240);
+        obs_data_set_default_int(settings, "activity.padding", 16);
+        obs_data_set_default_int(settings, "activity.font_size", 36);
+        obs_data_set_default_int(settings, "activity.text_color", 0xffffffff);
+        obs_data_set_default_bool(settings, "activity.text_shadow", false);
+        obs_data_set_default_int(settings, "activity.text_shadow_color", 0xcc000000);
+        obs_data_set_default_int(settings, "activity.text_shadow_offset", 2);
         if constexpr (std::is_same_v<T, live_keys_source>) {
             obs_data_set_default_int(settings, "live_keys.maximum", 8);
             obs_data_set_default_bool(settings, "live_keys.row_layout", false);
             obs_data_set_default_int(settings, "live_keys.fade_ms", 300);
-            obs_data_set_default_int(settings, "live_keys.color", 0xeb6325);
+            obs_data_set_default_string(settings, "live_keys.fade_curve", "linear");
+            obs_data_set_default_int(settings, "live_keys.color", 0xffeb6325);
         } else if constexpr (std::is_same_v<T, mouse_activity_source>) {
-            obs_data_set_default_string(settings, "mouse_activity.left_label", "LMB");
-            obs_data_set_default_string(settings, "mouse_activity.right_label", "RMB");
-            obs_data_set_default_bool(settings, "mouse_activity.show_middle_button", true);
+            obs_data_set_default_string(settings, "mouse_activity.left_label", "L");
+            obs_data_set_default_string(settings, "mouse_activity.right_label", "R");
+            obs_data_set_default_string(settings, "mouse_activity.middle_label", "M");
             obs_data_set_default_bool(settings, "mouse_activity.show_coordinates", false);
-            obs_data_set_default_int(settings, "mouse_activity.button_height", 48);
+            obs_data_set_default_string(settings, "mouse_activity.coordinates_position", "above");
+            obs_data_set_default_string(settings, "mouse_activity.coordinates_alignment", "center");
+            obs_data_set_default_bool(settings, "mouse_activity.show_border", false);
+            obs_data_set_default_bool(settings, "mouse_activity.show_center_mark", false);
             obs_data_set_default_int(settings, "mouse_activity.trail_ms", 1500);
             obs_data_set_default_string(settings, "mouse_activity.heatmap_gradient", "spectrum");
-            obs_data_set_default_int(settings, "mouse_activity.color", 0xeb6325);
+            obs_data_set_default_int(settings, "mouse_activity.color", 0xffeb6325);
+            obs_data_set_default_int(settings, "mouse_activity.left_color", 0xffeb6325);
+            obs_data_set_default_int(settings, "mouse_activity.right_color", 0xff4444ef);
+            obs_data_set_default_int(settings, "mouse_activity.middle_color", 0xff15ccfa);
+            obs_data_set_default_string(settings, "mouse_activity.map", "movement");
         } else if constexpr (std::is_same_v<T, statistics_source>) {
             obs_data_set_default_int(settings, "statistics.mouse_dpi", 800);
+            obs_data_set_default_string(settings, "statistics.distance_unit", "px");
+            obs_data_set_default_bool(settings, "statistics.show_key_rate", true);
+            obs_data_set_default_bool(settings, "statistics.show_total_keys", true);
+            obs_data_set_default_bool(settings, "statistics.show_click_rate", true);
+            obs_data_set_default_bool(settings, "statistics.show_total_clicks", true);
+            obs_data_set_default_bool(settings, "statistics.show_action_rate", true);
+            obs_data_set_default_bool(settings, "statistics.show_total_actions", true);
+            obs_data_set_default_bool(settings, "statistics.show_distance", true);
         } else if constexpr (std::is_same_v<T, input_intensity_source>) {
             obs_data_set_default_int(settings, "input_intensity.window", 30);
-            obs_data_set_default_int(settings, "input_intensity.color", 0xeb6325);
+            obs_data_set_default_int(settings, "input_intensity.color", 0xffeb6325);
             for (size_t index = 0; index < 8; ++index) {
                 const std::string prefix = "input_intensity.row" + std::to_string(index) + ".";
                 obs_data_set_default_bool(settings, (prefix + "enabled").c_str(), index == 0);
@@ -1215,21 +1401,49 @@ obs_properties_t *keys_properties(void *)
     obs_properties_add_int(p, "live_keys.maximum", obs_module_text("LiveKeys.Maximum"), 1, 64, 1);
     obs_properties_add_bool(p, "live_keys.row_layout", obs_module_text("LiveKeys.RowLayout"));
     obs_properties_add_int_slider(p, "live_keys.fade_ms", obs_module_text("LiveKeys.FadeDuration"), 0, 5000, 10);
-    obs_properties_add_color(p, "live_keys.color", obs_module_text("Activity.ActiveColor"));
+    auto *fade_curve = obs_properties_add_list(p, "live_keys.fade_curve", obs_module_text("LiveKeys.FadeCurve"),
+                                               OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
+    obs_property_list_add_string(fade_curve, obs_module_text("LiveKeys.FadeCurve.Linear"), "linear");
+    obs_property_list_add_string(fade_curve, obs_module_text("LiveKeys.FadeCurve.EaseIn"), "ease_in");
+    obs_property_list_add_string(fade_curve, obs_module_text("LiveKeys.FadeCurve.EaseOut"), "ease_out");
+    obs_property_list_add_string(fade_curve, obs_module_text("LiveKeys.FadeCurve.EaseInOut"), "ease_in_out");
+    obs_properties_add_color_alpha(p, "live_keys.color", obs_module_text("Activity.ActiveColor"));
     return p;
 }
 obs_properties_t *mouse_properties(void *data)
 {
     auto *p = obs_properties_create();
-    add_common_properties(p);
+    add_common_properties(p, false);
     obs_properties_add_text(p, "mouse_activity.left_label", obs_module_text("MouseActivity.LeftLabel"),
                             OBS_TEXT_DEFAULT);
     obs_properties_add_text(p, "mouse_activity.right_label", obs_module_text("MouseActivity.RightLabel"),
                             OBS_TEXT_DEFAULT);
-    obs_properties_add_bool(p, "mouse_activity.show_middle_button", obs_module_text("MouseActivity.ShowMiddle"));
+    obs_properties_add_text(p, "mouse_activity.middle_label", obs_module_text("MouseActivity.MiddleLabel"),
+                            OBS_TEXT_DEFAULT);
+    obs_properties_add_color_alpha(p, "mouse_activity.left_color", obs_module_text("MouseActivity.LeftColor"));
+    obs_properties_add_color_alpha(p, "mouse_activity.right_color", obs_module_text("MouseActivity.RightColor"));
+    obs_properties_add_color_alpha(p, "mouse_activity.middle_color", obs_module_text("MouseActivity.MiddleColor"));
     obs_properties_add_bool(p, "mouse_activity.show_coordinates", obs_module_text("MouseActivity.ShowCoordinates"));
-    obs_properties_add_int_slider(p, "mouse_activity.button_height", obs_module_text("MouseActivity.ButtonHeight"),
-                                  24, 240, 1);
+    auto *coordinates_position =
+        obs_properties_add_list(p, "mouse_activity.coordinates_position",
+                                obs_module_text("MouseActivity.CoordinatesPosition"), OBS_COMBO_TYPE_LIST,
+                                OBS_COMBO_FORMAT_STRING);
+    obs_property_list_add_string(coordinates_position, obs_module_text("MouseActivity.CoordinatesPosition.Above"),
+                                 "above");
+    obs_property_list_add_string(coordinates_position, obs_module_text("MouseActivity.CoordinatesPosition.Below"),
+                                 "below");
+    auto *coordinates_alignment =
+        obs_properties_add_list(p, "mouse_activity.coordinates_alignment",
+                                obs_module_text("MouseActivity.CoordinatesAlignment"), OBS_COMBO_TYPE_LIST,
+                                OBS_COMBO_FORMAT_STRING);
+    obs_property_list_add_string(coordinates_alignment, obs_module_text("MouseActivity.CoordinatesAlignment.Left"),
+                                 "left");
+    obs_property_list_add_string(coordinates_alignment,
+                                 obs_module_text("MouseActivity.CoordinatesAlignment.Center"), "center");
+    obs_property_list_add_string(coordinates_alignment, obs_module_text("MouseActivity.CoordinatesAlignment.Right"),
+                                 "right");
+    obs_properties_add_bool(p, "mouse_activity.show_border", obs_module_text("MouseActivity.ShowBorder"));
+    obs_properties_add_bool(p, "mouse_activity.show_center_mark", obs_module_text("MouseActivity.ShowCenterMark"));
     obs_properties_add_int_slider(p, "mouse_activity.trail_ms", obs_module_text("MouseActivity.TrailDuration"), 100,
                                   10000, 50);
     auto *gradient = obs_properties_add_list(p, "mouse_activity.heatmap_gradient",
@@ -1238,7 +1452,11 @@ obs_properties_t *mouse_properties(void *data)
     obs_property_list_add_string(gradient, obs_module_text("MouseActivity.HeatmapGradient.Spectrum"), "spectrum");
     obs_property_list_add_string(gradient, obs_module_text("MouseActivity.HeatmapGradient.Lime"), "lime");
     obs_property_list_add_string(gradient, obs_module_text("MouseActivity.HeatmapGradient.Ocean"), "ocean");
-    obs_properties_add_color(p, "mouse_activity.color", obs_module_text("Activity.ActiveColor"));
+    auto *map = obs_properties_add_list(p, "mouse_activity.map", obs_module_text("MouseActivity.Map"),
+                                        OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
+    obs_property_list_add_string(map, obs_module_text("MouseActivity.Map.Movement"), "movement");
+    obs_property_list_add_string(map, obs_module_text("MouseActivity.Map.Clicks"), "clicks");
+    obs_properties_add_color_alpha(p, "mouse_activity.color", obs_module_text("Activity.ActiveColor"));
     auto *displays = obs_properties_add_list(p, "mouse_activity.display", obs_module_text("MouseActivity.Display"),
                                              OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
     unsigned char count{};
@@ -1262,7 +1480,22 @@ obs_properties_t *statistics_properties(void *)
 {
     auto *p = obs_properties_create();
     add_common_properties(p);
-    obs_properties_add_int(p, "statistics.mouse_dpi", obs_module_text("Statistics.MouseDPI"), 1, 100000, 1);
+    auto *distance_unit = obs_properties_add_list(p, "statistics.distance_unit", obs_module_text("Statistics.DistanceUnit"),
+                                                  OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
+    obs_property_list_add_string(distance_unit, obs_module_text("Statistics.DistanceUnit.Pixels"), "px");
+    obs_property_list_add_string(distance_unit, obs_module_text("Statistics.DistanceUnit.Inches"), "in");
+    obs_property_list_add_string(distance_unit, obs_module_text("Statistics.DistanceUnit.Centimeters"), "cm");
+    obs_property_set_modified_callback(distance_unit, distance_unit_changed);
+    auto *mouse_dpi =
+        obs_properties_add_int(p, "statistics.mouse_dpi", obs_module_text("Statistics.MouseDPI"), 1, 100000, 1);
+    obs_property_set_visible(mouse_dpi, false);
+    obs_properties_add_bool(p, "statistics.show_key_rate", obs_module_text("Statistics.ShowKeyRate"));
+    obs_properties_add_bool(p, "statistics.show_total_keys", obs_module_text("Statistics.ShowTotalKeys"));
+    obs_properties_add_bool(p, "statistics.show_click_rate", obs_module_text("Statistics.ShowClickRate"));
+    obs_properties_add_bool(p, "statistics.show_total_clicks", obs_module_text("Statistics.ShowTotalClicks"));
+    obs_properties_add_bool(p, "statistics.show_action_rate", obs_module_text("Statistics.ShowActionRate"));
+    obs_properties_add_bool(p, "statistics.show_total_actions", obs_module_text("Statistics.ShowTotalActions"));
+    obs_properties_add_bool(p, "statistics.show_distance", obs_module_text("Statistics.ShowDistance"));
     return p;
 }
 
@@ -1324,7 +1557,7 @@ obs_properties_t *intensity_properties(void *)
     auto *p = obs_properties_create();
     add_common_properties(p);
     obs_properties_add_int_slider(p, "input_intensity.window", obs_module_text("InputIntensity.Window"), 1, 60, 1);
-    obs_properties_add_color(p, "input_intensity.color", obs_module_text("InputIntensity.Color"));
+    obs_properties_add_color_alpha(p, "input_intensity.color", obs_module_text("InputIntensity.Color"));
     for (size_t index = 0; index < 8; ++index) {
         const std::string prefix = "input_intensity.row" + std::to_string(index) + ".";
         const QByteArray row_label =

@@ -953,9 +953,6 @@ public:
 
         const QRect bounds(padding, padding, std::max(1, width - padding * 2), std::max(1, height - padding * 2));
         const int row_height = std::max(1, bounds.height() / static_cast<int>(active_rows.size()));
-        const int label_width = std::min(150, std::max(70, bounds.width() / 3));
-        const int chart_left = bounds.left() + label_width + 8;
-        const int chart_width = std::max(24, bounds.right() - chart_left + 1);
         QFont row_font = font();
         row_font.setPixelSize(std::clamp(row_height / 3, 9, font_size));
         painter.setFont(row_font);
@@ -964,13 +961,15 @@ public:
             const size_t row_index = active_rows[visible_index];
             const QRect row_rect(bounds.left(), bounds.top() + static_cast<int>(visible_index) * row_height,
                                  bounds.width(), row_height);
-            const QRect label_rect(row_rect.left(), row_rect.top(), label_width, row_rect.height());
+            const int label_height = std::max(1, std::min(row_rect.height() / 3, row_font.pixelSize() + 2));
             const int value_label_height = std::max(1, std::min(row_rect.height() / 3, row_font.pixelSize() + 2));
-            const QRect chart_rect(chart_left, row_rect.top() + 2, chart_width,
-                                   std::max(1, row_rect.height() - value_label_height - 4));
-            const QRect value_label_rect(chart_left, chart_rect.bottom() + 1, chart_width, value_label_height + 1);
+            const QRect label_rect(row_rect.left(), row_rect.top(), row_rect.width(), label_height);
+            const QRect chart_rect(row_rect.left(), label_rect.bottom() + 3, row_rect.width(),
+                                   std::max(1, row_rect.height() - label_height - value_label_height - 4));
+            const QRect value_label_rect(row_rect.left(), chart_rect.bottom() + 1, row_rect.width(),
+                                         value_label_height + 1);
             painter.setPen(text_color);
-            painter.drawText(label_rect, Qt::AlignLeft | Qt::AlignVCenter, row_label(rows[row_index]));
+            painter.drawText(label_rect, Qt::AlignLeft | Qt::AlignTop, row_label(rows[row_index]));
             draw_box_plot(painter, chart_rect, value_label_rect, row_index);
         }
     }

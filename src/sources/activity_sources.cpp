@@ -9,6 +9,7 @@
 #include <QImage>
 #include <QPainter>
 #include <QPainterPath>
+#include <QStringList>
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -790,6 +791,13 @@ public:
     {
         activity_source::update(settings);
         mouse_dpi = std::max<int64_t>(1, obs_data_get_int(settings, "statistics.mouse_dpi"));
+        show_key_rate = obs_data_get_bool(settings, "statistics.show_key_rate");
+        show_total_keys = obs_data_get_bool(settings, "statistics.show_total_keys");
+        show_click_rate = obs_data_get_bool(settings, "statistics.show_click_rate");
+        show_total_clicks = obs_data_get_bool(settings, "statistics.show_total_clicks");
+        show_action_rate = obs_data_get_bool(settings, "statistics.show_action_rate");
+        show_total_actions = obs_data_get_bool(settings, "statistics.show_total_actions");
+        show_distance = obs_data_get_bool(settings, "statistics.show_distance");
     }
     void on_event(const input_data::trace_event &event) override
     {
@@ -838,18 +846,37 @@ public:
     {
         painter.setFont(font());
         painter.setPen(text_color);
-        const QString text = QString("KPM: %1  Total keys: %2\nCPM: %3  Total clicks: %4\nAPM: %5  Total actions: %6\n"
-                                     "Distance: %7 px (%8 in)")
-                                 .arg(keys.size())
-                                 .arg(total_keys)
-                                 .arg(clicks.size())
-                                 .arg(total_clicks)
-                                 .arg(keys.size() + clicks.size())
-                                 .arg(total_keys + total_clicks)
-                                 .arg(distance, 0, 'f', 0)
-                                 .arg(distance / mouse_dpi, 0, 'f', 2);
-        painter.drawText(QRect(padding, padding, width - padding * 2, height - padding * 2),
-                         Qt::AlignLeft | Qt::AlignVCenter, text);
+        QStringList lines;
+        QStringList key_metrics;
+        if (show_key_rate)
+            key_metrics.append(QString("KPM: %1").arg(keys.size()));
+        if (show_total_keys)
+            key_metrics.append(QString("Total keys: %1").arg(total_keys));
+        if (!key_metrics.isEmpty())
+            lines.append(key_metrics.join("  "));
+
+        QStringList click_metrics;
+        if (show_click_rate)
+            click_metrics.append(QString("CPM: %1").arg(clicks.size()));
+        if (show_total_clicks)
+            click_metrics.append(QString("Total clicks: %1").arg(total_clicks));
+        if (!click_metrics.isEmpty())
+            lines.append(click_metrics.join("  "));
+
+        QStringList action_metrics;
+        if (show_action_rate)
+            action_metrics.append(QString("APM: %1").arg(keys.size() + clicks.size()));
+        if (show_total_actions)
+            action_metrics.append(QString("Total actions: %1").arg(total_keys + total_clicks));
+        if (!action_metrics.isEmpty())
+            lines.append(action_metrics.join("  "));
+
+        if (show_distance)
+            lines.append(QString("Distance: %1 px (%2 in)").arg(distance, 0, 'f', 0).arg(distance / mouse_dpi, 0, 'f', 2));
+
+        const Qt::Alignment alignment = lines.isEmpty() ? Qt::AlignCenter : Qt::AlignLeft | Qt::AlignVCenter;
+        painter.drawText(QRect(padding, padding, width - padding * 2, height - padding * 2), alignment,
+                         lines.isEmpty() ? obs_module_text("Statistics.NoMetrics") : lines.join('\n'));
     }
     void reset_activity() override
     {
@@ -868,6 +895,8 @@ private:
     double distance{};
     uint64_t total_keys{}, total_clicks{};
     int64_t mouse_dpi{800};
+    bool show_key_rate{true}, show_total_keys{true}, show_click_rate{true}, show_total_clicks{true};
+    bool show_action_rate{true}, show_total_actions{true}, show_distance{true};
     std::optional<input_data::trace_event> last_motion;
 };
 
@@ -1241,6 +1270,13 @@ template<typename T> void register_source(const char *id, const char *name, obs_
             obs_data_set_default_string(settings, "mouse_activity.map", "movement");
         } else if constexpr (std::is_same_v<T, statistics_source>) {
             obs_data_set_default_int(settings, "statistics.mouse_dpi", 800);
+            obs_data_set_default_bool(settings, "statistics.show_key_rate", true);
+            obs_data_set_default_bool(settings, "statistics.show_total_keys", true);
+            obs_data_set_default_bool(settings, "statistics.show_click_rate", true);
+            obs_data_set_default_bool(settings, "statistics.show_total_clicks", true);
+            obs_data_set_default_bool(settings, "statistics.show_action_rate", true);
+            obs_data_set_default_bool(settings, "statistics.show_total_actions", true);
+            obs_data_set_default_bool(settings, "statistics.show_distance", true);
         } else if constexpr (std::is_same_v<T, input_intensity_source>) {
             obs_data_set_default_int(settings, "input_intensity.window", 30);
             obs_data_set_default_int(settings, "input_intensity.color", 0xeb6325);
@@ -1318,6 +1354,13 @@ obs_properties_t *statistics_properties(void *)
     auto *p = obs_properties_create();
     add_common_properties(p);
     obs_properties_add_int(p, "statistics.mouse_dpi", obs_module_text("Statistics.MouseDPI"), 1, 100000, 1);
+    obs_properties_add_bool(p, "statistics.show_key_rate", obs_module_text("Statistics.ShowKeyRate"));
+    obs_properties_add_bool(p, "statistics.show_total_keys", obs_module_text("Statistics.ShowTotalKeys"));
+    obs_properties_add_bool(p, "statistics.show_click_rate", obs_module_text("Statistics.ShowClickRate"));
+    obs_properties_add_bool(p, "statistics.show_total_clicks", obs_module_text("Statistics.ShowTotalClicks"));
+    obs_properties_add_bool(p, "statistics.show_action_rate", obs_module_text("Statistics.ShowActionRate"));
+    obs_properties_add_bool(p, "statistics.show_total_actions", obs_module_text("Statistics.ShowTotalActions"));
+    obs_properties_add_bool(p, "statistics.show_distance", obs_module_text("Statistics.ShowDistance"));
     return p;
 }
 

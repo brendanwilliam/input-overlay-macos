@@ -337,13 +337,19 @@ public:
             }
         }
     }
+    void reset_activity() override
+    {
+        press_counts.clear();
+        for (auto &key : ordered)
+            key.press_count = 0;
+    }
     void render(QPainter &painter) override
     {
         painter.setFont(font());
         const int start = std::max(0, static_cast<int>(ordered.size()) - maximum);
         const int visible = static_cast<int>(ordered.size()) - start;
         const int gap = 2;
-        const int key_width = row_layout ? std::max(1, (width - padding * 2 - gap * (visible - 1)) / std::max(1, visible))
+        const int key_width = row_layout ? std::max(1, (width - padding * 2 - gap * (maximum - 1)) / maximum)
                                          : std::max(1, width - padding * 2);
         const int key_height = row_layout ? std::max(1, height - padding * 2)
                                           : std::max(1, (height - padding * 2) / maximum - gap);
@@ -415,6 +421,9 @@ public:
         map_clicks = new_map_clicks;
         display = new_display;
         load_display();
+        update_dimensions();
+        show_border = obs_data_get_bool(settings, "mouse_activity.show_border");
+        show_center_mark = obs_data_get_bool(settings, "mouse_activity.show_center_mark");
         resize_heatmap();
         if (display_changed || heatmap_rect() != previous_heatmap)
             trail.clear();
@@ -424,6 +433,11 @@ public:
         for (auto &bin : hex_bins)
             bin.value = 0;
         last_motion.reset();
+    }
+    void reset_activity() override
+    {
+        clear();
+        trail.clear();
     }
     void on_event(const input_data::trace_event &event) override
     {
@@ -482,6 +496,7 @@ public:
         const QRect heatmap = heatmap_rect();
         draw_heatmap(painter, heatmap);
         draw_trail(painter, os_gettime_ns());
+        draw_screen_guides(painter, heatmap);
         painter.setFont(font());
         draw_pointer(painter);
         if (show_coordinates && coordinates) {
@@ -509,11 +524,19 @@ private:
         build_hex_lattice();
         last_motion.reset();
     }
-    QRect coordinate_rect() const { return {padding, padding, width - padding * 2, font_size}; }
+    void update_dimensions()
+    {
+        if (monitor.width <= 0 || monitor.height <= 0)
+            return;
+        const int content_width = std::max(1, width - padding * 2);
+        height = std::max(1, static_cast<int>(std::lround(content_width *
+                                                          static_cast<double>(monitor.height) / monitor.width)) +
+                                 padding * 2);
+    }
+    QRect coordinate_rect() const { return {padding, padding, std::max(1, width - padding * 2), font_size}; }
     QRect heatmap_rect() const
     {
-        const int top = show_coordinates ? coordinate_rect().bottom() + padding + 1 : padding;
-        return {padding, top, std::max(1, width - padding * 2), std::max(1, height - padding - top)};
+        return {padding, padding, std::max(1, width - padding * 2), std::max(1, height - padding * 2)};
     }
     void build_hex_lattice()
     {
@@ -668,6 +691,25 @@ private:
         else
             monitor = {};
     }
+    void draw_screen_guides(QPainter &painter, const QRect &rect) const
+    {
+        if (!show_border && !show_center_mark)
+            return;
+        painter.save();
+        QPen pen(text_color, 1.5);
+        pen.setCapStyle(Qt::RoundCap);
+        painter.setPen(pen);
+        painter.setBrush(Qt::NoBrush);
+        if (show_border)
+            painter.drawRect(rect.adjusted(0, 0, -1, -1));
+        if (show_center_mark) {
+            const QPointF center = rect.center();
+            constexpr qreal crosshair_radius = 8.0;
+            painter.drawLine(center - QPointF(crosshair_radius, 0), center + QPointF(crosshair_radius, 0));
+            painter.drawLine(center - QPointF(0, crosshair_radius), center + QPointF(0, crosshair_radius));
+        }
+        painter.restore();
+    }
     void draw_pointer(QPainter &painter) const
     {
         if (!coordinates || monitor.width == 0 || monitor.height == 0)
@@ -717,7 +759,7 @@ private:
     std::unordered_map<uint16_t, QColor> button_colors{{MOUSE_BUTTON1, {37, 99, 235}},
                                                        {MOUSE_BUTTON2, {239, 68, 68}},
                                                        {MOUSE_BUTTON3, {250, 204, 21}}};
-    bool show_coordinates{}, map_clicks{};
+    bool show_coordinates{}, show_border{}, show_center_mark{}, map_clicks{};
     std::string heatmap_gradient{"spectrum"};
     uint64_t trail_duration_ns{1500ULL * 1000 * 1000};
     int display{};
@@ -1134,14 +1176,15 @@ bool reload_connections(obs_properties_t *, obs_property_t *property, void *)
         obs_property_list_add_string(property, connection.first.c_str(), connection.first.c_str());
     return true;
 }
-void add_common_properties(obs_properties_t *props)
+void add_common_properties(obs_properties_t *props, bool allow_height = true)
 {
     auto *list = obs_properties_add_list(props, S_INPUT_SOURCE, T_INPUT_SOURCE, OBS_COMBO_TYPE_EDITABLE,
                                          OBS_COMBO_FORMAT_STRING);
     reload_connections(nullptr, list, nullptr);
     obs_properties_add_button(props, S_RELOAD_CONNECTIONS, T_RELOAD_CONNECTIONS, reload_connections);
     obs_properties_add_int(props, "activity.width", obs_module_text("Activity.Width"), 64, 3840, 1);
-    obs_properties_add_int(props, "activity.height", obs_module_text("Activity.Height"), 32, 2160, 1);
+    if (allow_height)
+        obs_properties_add_int(props, "activity.height", obs_module_text("Activity.Height"), 32, 2160, 1);
     obs_properties_add_int(props, "activity.padding", obs_module_text("Activity.Padding"), 0, 200, 1);
     obs_properties_add_font(props, "activity.font", obs_module_text("Activity.Font"));
     obs_properties_add_int(props, "activity.font_size", obs_module_text("Activity.FontSize"), 8, 256, 1);
@@ -1172,10 +1215,10 @@ template<typename T> void register_source(const char *id, const char *name, obs_
     info.get_height = [](void *data) { return static_cast<uint32_t>(static_cast<T *>(data)->height); };
     info.get_properties = properties;
     info.get_defaults = [](obs_data_t *settings) {
-        obs_data_set_default_int(settings, "activity.width", 480);
-        obs_data_set_default_int(settings, "activity.height", 180);
-        obs_data_set_default_int(settings, "activity.padding", 12);
-        obs_data_set_default_int(settings, "activity.font_size", 28);
+        obs_data_set_default_int(settings, "activity.width", 640);
+        obs_data_set_default_int(settings, "activity.height", 240);
+        obs_data_set_default_int(settings, "activity.padding", 16);
+        obs_data_set_default_int(settings, "activity.font_size", 36);
         obs_data_set_default_int(settings, "activity.text_color", 0xffffff);
         if constexpr (std::is_same_v<T, live_keys_source>) {
             obs_data_set_default_int(settings, "live_keys.maximum", 8);
@@ -1183,14 +1226,19 @@ template<typename T> void register_source(const char *id, const char *name, obs_
             obs_data_set_default_int(settings, "live_keys.fade_ms", 300);
             obs_data_set_default_int(settings, "live_keys.color", 0xeb6325);
         } else if constexpr (std::is_same_v<T, mouse_activity_source>) {
-            obs_data_set_default_string(settings, "mouse_activity.left_label", "LMB");
-            obs_data_set_default_string(settings, "mouse_activity.right_label", "RMB");
-            obs_data_set_default_bool(settings, "mouse_activity.show_middle_button", true);
+            obs_data_set_default_string(settings, "mouse_activity.left_label", "L");
+            obs_data_set_default_string(settings, "mouse_activity.right_label", "R");
+            obs_data_set_default_string(settings, "mouse_activity.middle_label", "M");
             obs_data_set_default_bool(settings, "mouse_activity.show_coordinates", false);
-            obs_data_set_default_int(settings, "mouse_activity.button_height", 48);
+            obs_data_set_default_bool(settings, "mouse_activity.show_border", false);
+            obs_data_set_default_bool(settings, "mouse_activity.show_center_mark", false);
             obs_data_set_default_int(settings, "mouse_activity.trail_ms", 1500);
             obs_data_set_default_string(settings, "mouse_activity.heatmap_gradient", "spectrum");
             obs_data_set_default_int(settings, "mouse_activity.color", 0xeb6325);
+            obs_data_set_default_int(settings, "mouse_activity.left_color", 0xeb6325);
+            obs_data_set_default_int(settings, "mouse_activity.right_color", 0x4444ef);
+            obs_data_set_default_int(settings, "mouse_activity.middle_color", 0x15ccfa);
+            obs_data_set_default_string(settings, "mouse_activity.map", "movement");
         } else if constexpr (std::is_same_v<T, statistics_source>) {
             obs_data_set_default_int(settings, "statistics.mouse_dpi", 800);
         } else if constexpr (std::is_same_v<T, input_intensity_source>) {
@@ -1220,15 +1268,19 @@ obs_properties_t *keys_properties(void *)
 obs_properties_t *mouse_properties(void *data)
 {
     auto *p = obs_properties_create();
-    add_common_properties(p);
+    add_common_properties(p, false);
     obs_properties_add_text(p, "mouse_activity.left_label", obs_module_text("MouseActivity.LeftLabel"),
                             OBS_TEXT_DEFAULT);
     obs_properties_add_text(p, "mouse_activity.right_label", obs_module_text("MouseActivity.RightLabel"),
                             OBS_TEXT_DEFAULT);
-    obs_properties_add_bool(p, "mouse_activity.show_middle_button", obs_module_text("MouseActivity.ShowMiddle"));
+    obs_properties_add_text(p, "mouse_activity.middle_label", obs_module_text("MouseActivity.MiddleLabel"),
+                            OBS_TEXT_DEFAULT);
+    obs_properties_add_color(p, "mouse_activity.left_color", obs_module_text("MouseActivity.LeftColor"));
+    obs_properties_add_color(p, "mouse_activity.right_color", obs_module_text("MouseActivity.RightColor"));
+    obs_properties_add_color(p, "mouse_activity.middle_color", obs_module_text("MouseActivity.MiddleColor"));
     obs_properties_add_bool(p, "mouse_activity.show_coordinates", obs_module_text("MouseActivity.ShowCoordinates"));
-    obs_properties_add_int_slider(p, "mouse_activity.button_height", obs_module_text("MouseActivity.ButtonHeight"),
-                                  24, 240, 1);
+    obs_properties_add_bool(p, "mouse_activity.show_border", obs_module_text("MouseActivity.ShowBorder"));
+    obs_properties_add_bool(p, "mouse_activity.show_center_mark", obs_module_text("MouseActivity.ShowCenterMark"));
     obs_properties_add_int_slider(p, "mouse_activity.trail_ms", obs_module_text("MouseActivity.TrailDuration"), 100,
                                   10000, 50);
     auto *gradient = obs_properties_add_list(p, "mouse_activity.heatmap_gradient",
@@ -1237,6 +1289,10 @@ obs_properties_t *mouse_properties(void *data)
     obs_property_list_add_string(gradient, obs_module_text("MouseActivity.HeatmapGradient.Spectrum"), "spectrum");
     obs_property_list_add_string(gradient, obs_module_text("MouseActivity.HeatmapGradient.Lime"), "lime");
     obs_property_list_add_string(gradient, obs_module_text("MouseActivity.HeatmapGradient.Ocean"), "ocean");
+    auto *map = obs_properties_add_list(p, "mouse_activity.map", obs_module_text("MouseActivity.Map"),
+                                        OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
+    obs_property_list_add_string(map, obs_module_text("MouseActivity.Map.Movement"), "movement");
+    obs_property_list_add_string(map, obs_module_text("MouseActivity.Map.Clicks"), "clicks");
     obs_properties_add_color(p, "mouse_activity.color", obs_module_text("Activity.ActiveColor"));
     auto *displays = obs_properties_add_list(p, "mouse_activity.display", obs_module_text("MouseActivity.Display"),
                                              OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);

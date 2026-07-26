@@ -28,6 +28,10 @@ if(NOT CODESIGN_TEAM)
   # Switch to manual codesigning if no codesigning team is provided
   set(CMAKE_XCODE_ATTRIBUTE_CODE_SIGN_STYLE Manual)
   set(CMAKE_XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY "${CODESIGN_IDENTITY}")
+  if(CODESIGN_IDENTITY STREQUAL "-")
+    # The install step cleans bundle metadata and applies the local ad-hoc signature.
+    set(CMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED NO)
+  endif()
 else()
   if(CODESIGN_IDENTITY AND NOT CODESIGN_IDENTITY STREQUAL "-")
     # Switch to manual codesigning if a non-adhoc codesigning identity is provided
@@ -171,5 +175,5 @@ set(CMAKE_COLOR_DIAGNOSTICS TRUE)
 
 # Disable usage of RPATH in build or install configurations
 set(CMAKE_SKIP_RPATH TRUE)
-# Have Xcode set default RPATH entries
-set(CMAKE_XCODE_ATTRIBUTE_LD_RUNPATH_SEARCH_PATHS "@executable_path/../Frameworks")
+# Locate bundled plugin libraries relative to the module and OBS frameworks relative to the host application.
+set(CMAKE_XCODE_ATTRIBUTE_LD_RUNPATH_SEARCH_PATHS "@loader_path/../Frameworks @executable_path/../Frameworks")

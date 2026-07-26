@@ -61,6 +61,21 @@ function(set_target_properties_plugin target)
   install(TARGETS ${target} LIBRARY DESTINATION .)
   install(FILES "$<TARGET_BUNDLE_DIR:${target}>.dsym" CONFIGURATIONS Release DESTINATION . OPTIONAL)
 
+  # OBS does not ship SDL3, so place the shared library next to the plugin executable.
+  if(TARGET SDL3::SDL3)
+    install(FILES "$<TARGET_FILE:SDL3::SDL3>" DESTINATION "${target}.plugin/Contents/Frameworks")
+  endif()
+
+  # OBS is signed with the hardened runtime and will not load an unsigned local plugin.
+  # Sign after CMake has installed all bundle resources and before creating the local package.
+  set(local_plugin_path "\$ENV{DESTDIR}${CMAKE_INSTALL_PREFIX}/${target}.plugin")
+  string(
+    CONCAT local_signing_code
+    "execute_process(COMMAND /usr/bin/xattr -cr \"${local_plugin_path}\" COMMAND_ERROR_IS_FATAL ANY)\n"
+    "execute_process(COMMAND /usr/bin/codesign --force --deep --sign - \"${local_plugin_path}\" COMMAND_ERROR_IS_FATAL ANY)"
+  )
+  install(CODE "${local_signing_code}")
+
   configure_file(cmake/macos/resources/distribution.in "${CMAKE_CURRENT_BINARY_DIR}/distribution" @ONLY)
   configure_file(cmake/macos/resources/create-package.cmake.in "${CMAKE_CURRENT_BINARY_DIR}/create-package.cmake" @ONLY)
   install(SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/create-package.cmake")
@@ -82,6 +97,25 @@ function(target_install_resources target)
       target_sources(${target} PRIVATE "${data_file}")
       set_property(SOURCE "${data_file}" PROPERTY MACOSX_PACKAGE_LOCATION "Resources/${relative_path}")
       source_group("Resources/${relative_path}" FILES "${data_file}")
+    endforeach()
+  endif()
+
+  if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/presets")
+    file(GLOB_RECURSE preset_files "${CMAKE_CURRENT_SOURCE_DIR}/presets/*")
+    foreach(preset_file IN LISTS preset_files)
+      if(IS_DIRECTORY "${preset_file}")
+        continue()
+      endif()
+      cmake_path(
+        RELATIVE_PATH
+        preset_file
+        BASE_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/presets/"
+        OUTPUT_VARIABLE relative_path
+      )
+      cmake_path(GET relative_path PARENT_PATH relative_path)
+      target_sources(${target} PRIVATE "${preset_file}")
+      set_property(SOURCE "${preset_file}" PROPERTY MACOSX_PACKAGE_LOCATION "Resources/presets/${relative_path}")
+      source_group("Resources/presets/${relative_path}" FILES "${preset_file}")
     endforeach()
   endif()
 endfunction()

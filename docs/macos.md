@@ -46,8 +46,57 @@ The last command installs `input-overlay.plugin` into:
 ~/Library/Application Support/obs-studio/plugins
 ```
 
+The install step automatically applies an ad-hoc signature so OBS can load a local build. Published releases are
+signed for distribution.
+
 Restart OBS and follow the Accessibility steps above. The first configure can take a while because it downloads and
 builds the OBS development dependencies.
+
+## Add an overlay in OBS
+
+Add an **Input Overlay** source to a scene, then open its properties. Use the **Built-in preset** dropdown to select a
+keyboard, mouse, or controller layout; it automatically applies the matching texture and layout files. The file fields
+remain available for custom layouts.
+
+### Procedural keyboard style
+
+Enable **Use procedural keyboard style** in the same source properties to render a live WASD and arrow-key overlay
+without image assets. Adjust the key shape, width, height, grid gap, corner radius, font and font size, and idle,
+pressed, border, and text colors directly in OBS. Use **Custom key layout** to choose and arrange keys: each character
+occupies one grid cell, and spaces (or `_`) are blank cells. For example, `qwer` followed by `  df` gives a staggered
+second row. Use bracketed names for special keys in a single cell, such as `[SPACE]`, `[LEFT]`, `[COMMAND]`,
+`[OPTION]`, or `[SHIFT]`. Label a key with `|`, for example `[SPACE|Jump]`, `[Q|Dash]`, or `[COMMAND|Menu]`—the text
+after `|` is shown while the key still responds to the name before it. Letters, numbers, function keys, modifier keys,
+navigation keys, and common punctuation are supported. This mode uses the local Input Overlay hook and requires the
+Accessibility permission above.
+
+### Procedural mouse style
+
+Add a second **Input Overlay** source and enable **Use procedural mouse overlay** to create a file-free mouse input
+display. Configure its width, height, button gap, corner radius, font and font size, colors, and the labels for left,
+right, and middle click (for example, `Fire`, `Aim`, and `Ping`). The corresponding button changes to the pressed color
+while it is held. Use a separate source when showing both the procedural keyboard and mouse.
+
+## Live activity sources
+
+The source picker also includes three independent live sources. Each has its own **Input source** selector, so it can
+show this Mac or an input client connected over the trusted local WebSocket connection.
+
+- **Live Keys** lists held physical keys in press order, with each key's session press count. Repeated key-down events
+  do not add duplicate entries. Enable **Show keys in a row** for a horizontal key strip; the source width and height
+  determine the resulting key sizes. Set **Maximum visible keys** to reserve a stable transparent area for the list.
+- **Mouse Activity** shows left, middle, and right button states in a mouse-like strip and a circular cursor with a
+  fading, tapered trail. The trail shows 1.5 seconds by default and its duration can be adjusted. It includes a
+  session dwell-time hexbin heatmap. Optional coordinates appear above the tracker, while the button strip is below it
+  for a trackpad-like layout. Its height can be adjusted. Choose a spectrum, lime, or ocean palette. Visited hexes are
+  colored in four session-relative dwell-time percentile buckets, from least to most hovered, and persist until
+  **Clear heatmap** is pressed. The compact, unlabeled middle button can be hidden. Coordinates are integer X/Y
+  values relative to the selected display's top-left corner; they update only while the cursor is inside that display.
+- **Input Statistics** reports the preceding 60 seconds of distinct key-down events (KPM), left/right/middle
+  button-down events (CPM), and their sum (APM), plus session totals for keys, clicks, and actions. Scrolling and
+  motion are not actions. Distance is the accumulated distance between captured mouse motion points, shown in pixels
+  and inches using the configured mouse DPI. Configure **Reset Input Statistics** in OBS Hotkeys; it resets only that
+  source's rates, totals, and distance, not a Mouse Activity heatmap.
 
 To remove a source or release installation, quit OBS and delete:
 

@@ -32,6 +32,9 @@ class sdl_gamepad;
 typedef struct obs_data obs_data_t;
 
 namespace sources {
+class procedural_keyboard;
+class procedural_mouse;
+
 class overlay_settings {
 public:
     /* clang-format: off */
@@ -80,6 +83,8 @@ public:
 
     uint32_t cx = 0, cy = 0;
     std::unique_ptr<overlay> m_overlay{};
+    std::unique_ptr<procedural_keyboard> m_procedural_keyboard{};
+    std::unique_ptr<procedural_mouse> m_procedural_mouse{};
     overlay_settings m_settings;
 
     input_source(obs_source_t *source, obs_data_t *settings);
@@ -90,7 +95,7 @@ public:
 
     inline void tick(float seconds);
 
-    inline void render(gs_effect_t *effect) const;
+    inline void render(gs_effect_t *effect);
 };
 
 /* Event handlers */

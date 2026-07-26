@@ -84,9 +84,11 @@ show this Mac or an input client connected over the trusted local WebSocket conn
 
 - **Live Keys** lists held physical keys in press order. Repeated key-down events do not add duplicate rows. Set
   **Maximum visible keys** to reserve a stable transparent area for the list.
-- **Mouse Activity** shows independent left, right, and middle button states, a three-second cursor trail, and a
-  session heatmap. Select the display whose coordinates should be rendered; motion outside that display is ignored.
-  The heatmap persists until **Clear heatmap** is pressed.
+- **Mouse Activity** shows left, middle, and right button states in a mouse-like strip, a three-second cursor trail,
+  and a session dwell-time heatmap. The compact, unlabeled middle button can be hidden. The heatmap groups visited
+  display regions into blue, cyan, yellow, and red dwell-time quartiles, from least to most hovered, and persists
+  until **Clear heatmap** is pressed. Optionally show integer X/Y coordinates relative to the selected display's
+  top-left corner; they update only while the cursor is inside that display.
 - **Input Statistics** reports the preceding 60 seconds of distinct key-down events (KPM), left/right/middle
   button-down events (CPM), and their sum (APM). Scrolling and motion are not actions. Distance is the accumulated
   distance between captured mouse motion points, measured in screen pixels. Configure **Reset Input Statistics** in

@@ -8,10 +8,12 @@
 #include <QFont>
 #include <QImage>
 #include <QPainter>
+#include <QPainterPath>
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <deque>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <type_traits>
@@ -28,7 +30,7 @@ namespace sources {
 namespace {
 constexpr uint64_t minute_ns = 60ULL * 1000 * 1000 * 1000;
 constexpr uint64_t max_heatmap_gap_ns = 250ULL * 1000 * 1000;
-constexpr int heatmap_cell_size = 8;
+constexpr qreal heatmap_hex_radius = 10.0;
 
 QColor obs_color(uint32_t color)
 {
@@ -353,26 +355,33 @@ public:
     using activity_source::activity_source;
     void update(obs_data_t *settings) override
     {
+        const QRect previous_heatmap = heatmap_rect();
         activity_source::update(settings);
         left_label = QString::fromUtf8(obs_data_get_string(settings, "mouse_activity.left_label"));
         right_label = QString::fromUtf8(obs_data_get_string(settings, "mouse_activity.right_label"));
         show_middle_button = obs_data_get_bool(settings, "mouse_activity.show_middle_button");
         show_coordinates = obs_data_get_bool(settings, "mouse_activity.show_coordinates");
+        button_height = std::clamp(static_cast<int>(obs_data_get_int(settings, "mouse_activity.button_height")), 24, 240);
+        heatmap_gradient = obs_data_get_string(settings, "mouse_activity.heatmap_gradient");
         trail_duration_ns = static_cast<uint64_t>(
             std::max<int64_t>(100, obs_data_get_int(settings, "mouse_activity.trail_ms")) * 1000 * 1000);
         active_color = obs_color(static_cast<uint32_t>(obs_data_get_int(settings, "mouse_activity.color")));
         const int new_display = static_cast<int>(obs_data_get_int(settings, "mouse_activity.display"));
-        if (new_display != display) {
+        const bool display_changed = new_display != display;
+        if (display_changed) {
             coordinates.reset();
             last_motion.reset();
         }
         display = new_display;
         load_display();
         resize_heatmap();
+        if (display_changed || heatmap_rect() != previous_heatmap)
+            trail.clear();
     }
     void clear()
     {
-        std::fill(dwell_times.begin(), dwell_times.end(), 0);
+        for (auto &bin : hex_bins)
+            bin.dwell = 0;
         last_motion.reset();
     }
     void on_event(const input_data::trace_event &event) override
@@ -393,14 +402,17 @@ public:
         const QRect heatmap = heatmap_rect();
         const QPoint point(heatmap.x() + relative_x * heatmap.width() / monitor.width,
                            heatmap.y() + relative_y * heatmap.height() / monitor.height);
+        const qreal maximum_trail_jump = std::hypot(heatmap.width(), heatmap.height()) / 3.0;
+        if (!trail.empty() &&
+            std::hypot(point.x() - trail.back().second.x(), point.y() - trail.back().second.y()) > maximum_trail_jump)
+            trail.clear();
         trail.push_back({event.time_ns, point});
-        const QPoint cell(std::min(heatmap_columns - 1, relative_x * heatmap_columns / monitor.width),
-                          std::min(heatmap_rows - 1, relative_y * heatmap_rows / monitor.height));
+        const size_t hex_index = nearest_hex(point);
         if (last_motion && event.time_ns > last_motion->time_ns) {
             const uint64_t duration = std::min(event.time_ns - last_motion->time_ns, max_heatmap_gap_ns);
-            dwell_times[last_motion->cell.y() * heatmap_columns + last_motion->cell.x()] += duration;
+            hex_bins[last_motion->hex_index].dwell += duration;
         }
-        last_motion = motion_point{event.time_ns, cell};
+        last_motion = motion_point{event.time_ns, hex_index};
     }
     void on_snapshot(const input_data::button_map<uint16_t> &, const input_data::button_map<uint16_t> &mouse) override
     {
@@ -420,39 +432,25 @@ public:
     {
         const QRect heatmap = heatmap_rect();
         draw_heatmap(painter, heatmap);
+        draw_trail(painter, os_gettime_ns());
         painter.setFont(font());
-        const int button_height = mouse_button_height();
+        const int button_y = height - padding - mouse_button_height();
         const int available_width = std::max(1, width - padding * 2);
         if (show_middle_button) {
             const int middle_width = std::clamp(available_width / 6, 24, 56);
             const int side_width = std::max(1, (available_width - middle_width - padding * 2) / 2);
             const int right_x = padding + side_width + padding + middle_width + padding;
-            draw_button(painter, QRect(padding, padding, side_width, button_height), left_label, MOUSE_BUTTON1);
-            draw_middle_button(painter, QRect(padding + side_width + padding, padding, middle_width, button_height));
-            draw_button(painter, QRect(right_x, padding, std::max(1, width - padding - right_x), button_height),
+            draw_button(painter, QRect(padding, button_y, side_width, mouse_button_height()), left_label, MOUSE_BUTTON1);
+            draw_middle_button(
+                painter, QRect(padding + side_width + padding, button_y, middle_width, mouse_button_height()));
+            draw_button(painter, QRect(right_x, button_y, std::max(1, width - padding - right_x), mouse_button_height()),
                         right_label, MOUSE_BUTTON2);
         } else {
             const int side_width = std::max(1, (available_width - padding) / 2);
-            draw_button(painter, QRect(padding, padding, side_width, button_height), left_label, MOUSE_BUTTON1);
-            draw_button(painter, QRect(padding + side_width + padding, padding,
-                                      std::max(1, width - padding * 2 - side_width - padding), button_height),
+            draw_button(painter, QRect(padding, button_y, side_width, mouse_button_height()), left_label, MOUSE_BUTTON1);
+            draw_button(painter, QRect(padding + side_width + padding, button_y,
+                                      std::max(1, width - padding * 2 - side_width - padding), mouse_button_height()),
                         right_label, MOUSE_BUTTON2);
-        }
-        const uint64_t now = os_gettime_ns();
-        for (const auto &point : trail) {
-            const double progress = std::clamp(static_cast<double>(now - point.first) / trail_duration_ns, 0.0, 1.0);
-            const double strength = 1.0 - progress;
-            const int alpha = static_cast<int>(180 * strength * strength);
-            const int radius = std::max(2, static_cast<int>(2 + 4 * strength));
-            painter.setBrush(QColor(active_color.red(), active_color.green(), active_color.blue(), alpha));
-            painter.setPen(Qt::NoPen);
-            painter.drawEllipse(point.second, radius, radius);
-        }
-        if (!trail.empty()) {
-            const QPoint &cursor = trail.back().second;
-            painter.setBrush(active_color);
-            painter.setPen(text_color);
-            painter.drawEllipse(cursor, 8, 8);
         }
         if (show_coordinates && coordinates) {
             painter.setPen(text_color);
@@ -464,66 +462,168 @@ public:
 private:
     struct motion_point {
         uint64_t time_ns;
-        QPoint cell;
+        size_t hex_index;
+    };
+    struct hex_bin {
+        QPointF center;
+        uint64_t dwell{};
     };
     void resize_heatmap()
     {
-        const int columns = std::max(1, (width + heatmap_cell_size - 1) / heatmap_cell_size);
-        const int rows = std::max(1, (height + heatmap_cell_size - 1) / heatmap_cell_size);
         if (width == heatmap_width && height == heatmap_height)
             return;
         heatmap_width = width;
         heatmap_height = height;
-        heatmap_columns = columns;
-        heatmap_rows = rows;
-        dwell_times.assign(static_cast<size_t>(columns * rows), 0);
+        build_hex_lattice();
         last_motion.reset();
     }
-    int mouse_button_height() const { return std::max(32, height / 4); }
-    QRect coordinate_rect() const { return {padding, height - padding - font_size, width - padding * 2, font_size}; }
+    int mouse_button_height() const { return button_height; }
+    QRect coordinate_rect() const { return {padding, padding, width - padding * 2, font_size}; }
     QRect heatmap_rect() const
     {
-        const int top = padding + mouse_button_height() + padding;
-        const int bottom = show_coordinates ? coordinate_rect().top() - padding : height - padding;
+        const int top = show_coordinates ? coordinate_rect().bottom() + padding + 1 : padding;
+        const int bottom = height - padding - mouse_button_height() - padding;
         return {padding, top, std::max(1, width - padding * 2), std::max(1, bottom - top)};
+    }
+    void build_hex_lattice()
+    {
+        hex_bins.clear();
+        const QRect rect = heatmap_rect();
+        const qreal hex_width = std::sqrt(3.0) * heatmap_hex_radius;
+        const qreal row_step = 1.5 * heatmap_hex_radius;
+        hex_columns = std::max(1, static_cast<int>(std::ceil(rect.width() / hex_width)) + 1);
+        hex_rows = std::max(1, static_cast<int>(std::ceil(rect.height() / row_step)) + 1);
+        hex_bins.reserve(static_cast<size_t>(hex_columns * hex_rows));
+        for (int row = 0; row < hex_rows; ++row) {
+            const qreal x_offset = row % 2 ? hex_width / 2.0 : 0.0;
+            for (int column = 0; column < hex_columns; ++column)
+                hex_bins.push_back({{rect.left() + hex_width / 2.0 + x_offset + column * hex_width,
+                                     rect.top() + heatmap_hex_radius + row * row_step}});
+        }
+    }
+    size_t nearest_hex(const QPointF &point) const
+    {
+        const QRect rect = heatmap_rect();
+        const qreal hex_width = std::sqrt(3.0) * heatmap_hex_radius;
+        const qreal row_step = 1.5 * heatmap_hex_radius;
+        const int estimated_row = static_cast<int>(std::floor((point.y() - rect.top() - heatmap_hex_radius) / row_step));
+        size_t nearest{};
+        qreal nearest_distance = std::numeric_limits<qreal>::max();
+        for (int row = std::max(0, estimated_row - 1); row <= std::min(hex_rows - 1, estimated_row + 1); ++row) {
+            const qreal x_offset = row % 2 ? hex_width / 2.0 : 0.0;
+            const int estimated_column = static_cast<int>(std::floor(
+                (point.x() - rect.left() - hex_width / 2.0 - x_offset) / hex_width));
+            for (int column = std::max(0, estimated_column - 1);
+                 column <= std::min(hex_columns - 1, estimated_column + 1); ++column) {
+                const size_t index = static_cast<size_t>(row * hex_columns + column);
+                const qreal dx = point.x() - hex_bins[index].center.x();
+                const qreal dy = point.y() - hex_bins[index].center.y();
+                const qreal distance = dx * dx + dy * dy;
+                if (distance < nearest_distance) {
+                    nearest_distance = distance;
+                    nearest = index;
+                }
+            }
+        }
+        return nearest;
+    }
+    QPainterPath trail_path(size_t first, size_t last) const
+    {
+        QPainterPath path(trail[first].second);
+        if (first == last)
+            return path;
+        if (first + 1 == last) {
+            path.lineTo(trail[last].second);
+            return path;
+        }
+        for (size_t index = first + 1; index < last; ++index) {
+            const QPointF midpoint = (trail[index].second + trail[index + 1].second) / 2.0;
+            path.quadTo(trail[index].second, midpoint);
+        }
+        path.lineTo(trail[last].second);
+        return path;
+    }
+    void draw_trail(QPainter &painter, uint64_t now) const
+    {
+        if (trail.empty())
+            return;
+        painter.setBrush(Qt::NoBrush);
+        size_t first_segment = 0;
+        while (first_segment + 1 < trail.size()) {
+            const double age = std::clamp(static_cast<double>(now - trail[first_segment + 1].first) / trail_duration_ns,
+                                          0.0, 1.0);
+            const int band = std::min(3, static_cast<int>(age * 4.0));
+            size_t last_point = first_segment + 1;
+            while (last_point + 1 < trail.size()) {
+                const double next_age = std::clamp(
+                    static_cast<double>(now - trail[last_point + 1].first) / trail_duration_ns, 0.0, 1.0);
+                if (std::min(3, static_cast<int>(next_age * 4.0)) != band)
+                    break;
+                ++last_point;
+            }
+            const double strength = 1.0 - (band + 0.5) / 4.0;
+            QPen pen(QColor(active_color.red(), active_color.green(), active_color.blue(),
+                             static_cast<int>(180 * strength * strength)));
+            pen.setWidthF(2.0 + 6.0 * strength);
+            pen.setCapStyle(Qt::FlatCap);
+            pen.setJoinStyle(Qt::RoundJoin);
+            painter.setPen(pen);
+            painter.drawPath(trail_path(first_segment, last_point));
+            first_segment = last_point;
+        }
+        painter.setBrush(active_color);
+        painter.setPen(text_color);
+        painter.drawEllipse(trail.back().second, 8, 8);
     }
     void draw_heatmap(QPainter &painter, const QRect &rect) const
     {
         std::vector<uint64_t> visited;
-        visited.reserve(dwell_times.size());
-        for (const uint64_t dwell : dwell_times) {
-            if (dwell > 0)
-                visited.push_back(dwell);
-        }
+        visited.reserve(hex_bins.size());
+        for (const auto &bin : hex_bins)
+            if (bin.dwell)
+                visited.push_back(bin.dwell);
         if (visited.empty())
             return;
         std::sort(visited.begin(), visited.end());
         const uint64_t first_quartile = visited[(visited.size() - 1) / 4];
         const uint64_t second_quartile = visited[(visited.size() - 1) / 2];
         const uint64_t third_quartile = visited[(visited.size() - 1) * 3 / 4];
-        painter.setPen(Qt::NoPen);
-        for (int row = 0; row < heatmap_rows; ++row) {
-            for (int column = 0; column < heatmap_columns; ++column) {
-                const uint64_t dwell = dwell_times[row * heatmap_columns + column];
-                if (!dwell)
-                    continue;
-                QColor color;
-                if (dwell <= first_quartile)
-                    color = {59, 130, 246, 180};
-                else if (dwell <= second_quartile)
-                    color = {6, 182, 212, 180};
-                else if (dwell <= third_quartile)
-                    color = {250, 204, 21, 180};
-                else
-                    color = {239, 68, 68, 180};
-                painter.setBrush(color);
-                const int left = rect.x() + column * rect.width() / heatmap_columns;
-                const int top = rect.y() + row * rect.height() / heatmap_rows;
-                const int right = rect.x() + (column + 1) * rect.width() / heatmap_columns;
-                const int bottom = rect.y() + (row + 1) * rect.height() / heatmap_rows;
-                painter.drawRect(left, top, right - left, bottom - top);
+        painter.save();
+        painter.setClipRect(rect);
+        for (const auto &bin : hex_bins) {
+            if (!bin.dwell)
+                continue;
+            const int band = bin.dwell <= first_quartile ? 0 : bin.dwell <= second_quartile ? 1 : bin.dwell <= third_quartile ? 2 : 3;
+            QColor color = heatmap_color(band);
+            color.setAlpha(150);
+            painter.setBrush(color);
+            QColor outline = heatmap_color(band);
+            outline.setAlpha(210);
+            QPen pen(outline, 0.75);
+            pen.setJoinStyle(Qt::RoundJoin);
+            painter.setPen(pen);
+            QPolygonF hexagon;
+            for (int corner = 0; corner < 6; ++corner) {
+                const qreal angle = (30.0 + corner * 60.0) * M_PI / 180.0;
+                hexagon << QPointF(bin.center.x() + heatmap_hex_radius * std::cos(angle),
+                                   bin.center.y() + heatmap_hex_radius * std::sin(angle));
             }
+            painter.drawPolygon(hexagon);
         }
+        painter.restore();
+    }
+    QColor heatmap_color(int band) const
+    {
+        if (heatmap_gradient == "lime") {
+            const QColor colors[] = {{101, 163, 13}, {132, 204, 22}, {190, 242, 100}, {250, 204, 21}};
+            return colors[band];
+        }
+        if (heatmap_gradient == "ocean") {
+            const QColor colors[] = {{30, 64, 175}, {14, 116, 144}, {34, 197, 94}, {250, 204, 21}};
+            return colors[band];
+        }
+        const QColor colors[] = {{59, 130, 246}, {6, 182, 212}, {250, 204, 21}, {239, 68, 68}};
+        return colors[band];
     }
     void load_display()
     {
@@ -553,6 +653,8 @@ private:
     QString left_label{"LMB"}, right_label{"RMB"};
     QColor active_color{37, 99, 235};
     bool show_middle_button{true}, show_coordinates{};
+    int button_height{48};
+    std::string heatmap_gradient{"spectrum"};
     uint64_t trail_duration_ns{1500ULL * 1000 * 1000};
     int display{};
     screen_data monitor{};
@@ -560,8 +662,8 @@ private:
     std::deque<std::pair<uint64_t, QPoint>> trail;
     std::optional<QPoint> coordinates;
     std::optional<motion_point> last_motion;
-    int heatmap_width{}, heatmap_height{}, heatmap_columns{}, heatmap_rows{};
-    std::vector<uint64_t> dwell_times;
+    int heatmap_width{}, heatmap_height{}, hex_columns{}, hex_rows{};
+    std::vector<hex_bin> hex_bins;
 };
 
 class statistics_source final : public activity_source {
@@ -705,7 +807,9 @@ template<typename T> void register_source(const char *id, const char *name, obs_
             obs_data_set_default_string(settings, "mouse_activity.right_label", "RMB");
             obs_data_set_default_bool(settings, "mouse_activity.show_middle_button", true);
             obs_data_set_default_bool(settings, "mouse_activity.show_coordinates", false);
+            obs_data_set_default_int(settings, "mouse_activity.button_height", 48);
             obs_data_set_default_int(settings, "mouse_activity.trail_ms", 1500);
+            obs_data_set_default_string(settings, "mouse_activity.heatmap_gradient", "spectrum");
             obs_data_set_default_int(settings, "mouse_activity.color", 0xeb6325);
         }
     };
@@ -730,8 +834,16 @@ obs_properties_t *mouse_properties(void *data)
                             OBS_TEXT_DEFAULT);
     obs_properties_add_bool(p, "mouse_activity.show_middle_button", obs_module_text("MouseActivity.ShowMiddle"));
     obs_properties_add_bool(p, "mouse_activity.show_coordinates", obs_module_text("MouseActivity.ShowCoordinates"));
+    obs_properties_add_int_slider(p, "mouse_activity.button_height", obs_module_text("MouseActivity.ButtonHeight"),
+                                  24, 240, 1);
     obs_properties_add_int_slider(p, "mouse_activity.trail_ms", obs_module_text("MouseActivity.TrailDuration"), 100,
                                   10000, 50);
+    auto *gradient = obs_properties_add_list(p, "mouse_activity.heatmap_gradient",
+                                             obs_module_text("MouseActivity.HeatmapGradient"), OBS_COMBO_TYPE_LIST,
+                                             OBS_COMBO_FORMAT_STRING);
+    obs_property_list_add_string(gradient, obs_module_text("MouseActivity.HeatmapGradient.Spectrum"), "spectrum");
+    obs_property_list_add_string(gradient, obs_module_text("MouseActivity.HeatmapGradient.Lime"), "lime");
+    obs_property_list_add_string(gradient, obs_module_text("MouseActivity.HeatmapGradient.Ocean"), "ocean");
     obs_properties_add_color(p, "mouse_activity.color", obs_module_text("Activity.ActiveColor"));
     auto *displays = obs_properties_add_list(p, "mouse_activity.display", obs_module_text("MouseActivity.Display"),
                                              OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);

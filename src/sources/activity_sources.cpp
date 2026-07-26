@@ -298,6 +298,8 @@ QString key_name(const input_data::trace_event &event)
 
 class live_keys_source final : public activity_source {
 public:
+    enum class fade_curve { linear, ease_in, ease_out, ease_in_out };
+
     using activity_source::activity_source;
     void update(obs_data_t *settings) override
     {
@@ -307,6 +309,15 @@ public:
         row_layout = obs_data_get_bool(settings, "live_keys.row_layout");
         fade_duration_ns =
             static_cast<uint64_t>(std::max<int64_t>(0, obs_data_get_int(settings, "live_keys.fade_ms"))) * 1000 * 1000;
+        const std::string curve = obs_data_get_string(settings, "live_keys.fade_curve");
+        if (curve == "ease_in")
+            fade = fade_curve::ease_in;
+        else if (curve == "ease_out")
+            fade = fade_curve::ease_out;
+        else if (curve == "ease_in_out")
+            fade = fade_curve::ease_in_out;
+        else
+            fade = fade_curve::linear;
         active_color = obs_color(static_cast<uint32_t>(obs_data_get_int(settings, "live_keys.color")));
     }
     void on_event(const input_data::trace_event &event) override
@@ -375,7 +386,8 @@ public:
                             row_layout ? padding : padding + position * (key_height + gap), key_width, key_height);
             const auto &key = ordered[index];
             const int alpha = key.fade_until > now && fade_duration_ns > 0
-                                  ? static_cast<int>(255 * static_cast<double>(key.fade_until - now) / fade_duration_ns)
+                                  ? static_cast<int>(255 * fade_alpha(
+                                                                static_cast<double>(key.fade_until - now) / fade_duration_ns))
                                   : (key.fade_until ? 0 : 255);
             QColor fill = active_color;
             fill.setAlpha(std::clamp(alpha, 0, 255));
@@ -390,6 +402,25 @@ public:
     }
 
 private:
+    double fade_alpha(double remaining) const
+    {
+        remaining = std::clamp(remaining, 0.0, 1.0);
+        switch (fade) {
+        case fade_curve::ease_in:
+            return 1.0 - (1.0 - remaining) * (1.0 - remaining);
+        case fade_curve::ease_out:
+            return remaining * remaining;
+        case fade_curve::ease_in_out: {
+            const double elapsed = 1.0 - remaining;
+            const double eased_elapsed = elapsed < 0.5 ? 2.0 * elapsed * elapsed
+                                                        : 1.0 - std::pow(-2.0 * elapsed + 2.0, 2.0) / 2.0;
+            return 1.0 - eased_elapsed;
+        }
+        case fade_curve::linear:
+            return remaining;
+        }
+        return remaining;
+    }
     struct active_key {
         uint16_t code;
         QString label;
@@ -398,6 +429,7 @@ private:
     };
     int maximum = 8;
     uint64_t fade_duration_ns = 300ULL * 1000 * 1000;
+    fade_curve fade{fade_curve::linear};
     QColor active_color{37, 99, 235};
     std::unordered_map<uint16_t, bool> held;
     std::unordered_map<uint16_t, uint64_t> press_counts;
@@ -1299,6 +1331,7 @@ template<typename T> void register_source(const char *id, const char *name, obs_
             obs_data_set_default_int(settings, "live_keys.maximum", 8);
             obs_data_set_default_bool(settings, "live_keys.row_layout", false);
             obs_data_set_default_int(settings, "live_keys.fade_ms", 300);
+            obs_data_set_default_string(settings, "live_keys.fade_curve", "linear");
             obs_data_set_default_int(settings, "live_keys.color", 0xffeb6325);
         } else if constexpr (std::is_same_v<T, mouse_activity_source>) {
             obs_data_set_default_string(settings, "mouse_activity.left_label", "L");
@@ -1345,6 +1378,12 @@ obs_properties_t *keys_properties(void *)
     obs_properties_add_int(p, "live_keys.maximum", obs_module_text("LiveKeys.Maximum"), 1, 64, 1);
     obs_properties_add_bool(p, "live_keys.row_layout", obs_module_text("LiveKeys.RowLayout"));
     obs_properties_add_int_slider(p, "live_keys.fade_ms", obs_module_text("LiveKeys.FadeDuration"), 0, 5000, 10);
+    auto *fade_curve = obs_properties_add_list(p, "live_keys.fade_curve", obs_module_text("LiveKeys.FadeCurve"),
+                                               OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
+    obs_property_list_add_string(fade_curve, obs_module_text("LiveKeys.FadeCurve.Linear"), "linear");
+    obs_property_list_add_string(fade_curve, obs_module_text("LiveKeys.FadeCurve.EaseIn"), "ease_in");
+    obs_property_list_add_string(fade_curve, obs_module_text("LiveKeys.FadeCurve.EaseOut"), "ease_out");
+    obs_property_list_add_string(fade_curve, obs_module_text("LiveKeys.FadeCurve.EaseInOut"), "ease_in_out");
     obs_properties_add_color_alpha(p, "live_keys.color", obs_module_text("Activity.ActiveColor"));
     return p;
 }

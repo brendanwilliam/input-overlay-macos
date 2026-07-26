@@ -82,8 +82,9 @@ while it is held. Use a separate source when showing both the procedural keyboar
 The source picker also includes three independent live sources. Each has its own **Input source** selector, so it can
 show this Mac or an input client connected over the trusted local WebSocket connection.
 
-- **Live Keys** lists held physical keys in press order. Repeated key-down events do not add duplicate rows. Set
-  **Maximum visible keys** to reserve a stable transparent area for the list.
+- **Live Keys** lists held physical keys in press order, with each key's session press count. Repeated key-down events
+  do not add duplicate entries. Enable **Show keys in a row** for a horizontal key strip; the source width and height
+  determine the resulting key sizes. Set **Maximum visible keys** to reserve a stable transparent area for the list.
 - **Mouse Activity** shows left, middle, and right button states in a mouse-like strip and a circular cursor with a
   fading, tapered trail. The trail shows 1.5 seconds by default and its duration can be adjusted. It includes a
   session dwell-time hexbin heatmap. Optional coordinates appear above the tracker, while the button strip is below it
@@ -92,9 +93,10 @@ show this Mac or an input client connected over the trusted local WebSocket conn
   **Clear heatmap** is pressed. The compact, unlabeled middle button can be hidden. Coordinates are integer X/Y
   values relative to the selected display's top-left corner; they update only while the cursor is inside that display.
 - **Input Statistics** reports the preceding 60 seconds of distinct key-down events (KPM), left/right/middle
-  button-down events (CPM), and their sum (APM). Scrolling and motion are not actions. Distance is the accumulated
-  distance between captured mouse motion points, measured in screen pixels. Configure **Reset Input Statistics** in
-  OBS Hotkeys; it resets only that source's rates and distance, not a Mouse Activity heatmap.
+  button-down events (CPM), and their sum (APM), plus session totals for keys, clicks, and actions. Scrolling and
+  motion are not actions. Distance is the accumulated distance between captured mouse motion points, shown in pixels
+  and inches using the configured mouse DPI. Configure **Reset Input Statistics** in OBS Hotkeys; it resets only that
+  source's rates, totals, and distance, not a Mouse Activity heatmap.
 
 To remove a source or release installation, quit OBS and delete:
 

@@ -266,6 +266,7 @@ public:
     {
         activity_source::update(settings);
         maximum = std::max(1, static_cast<int>(obs_data_get_int(settings, "live_keys.maximum")));
+        row_layout = obs_data_get_bool(settings, "live_keys.row_layout");
         fade_duration_ns =
             static_cast<uint64_t>(std::max<int64_t>(0, obs_data_get_int(settings, "live_keys.fade_ms"))) * 1000 * 1000;
         active_color = obs_color(static_cast<uint32_t>(obs_data_get_int(settings, "live_keys.color")));
@@ -277,7 +278,7 @@ public:
             ordered.erase(std::remove_if(ordered.begin(), ordered.end(),
                                          [&event](const auto &key) { return key.code == event.code; }),
                           ordered.end());
-            ordered.push_back({event.code, key_name(event), 0});
+            ordered.push_back({event.code, key_name(event), 0, ++press_counts[event.code]});
         } else if (event.type == EVENT_KEY_RELEASED) {
             held[event.code] = false;
             for (auto &key : ordered) {
@@ -309,18 +310,25 @@ public:
                 held[code] = true;
                 input_data::trace_event event{};
                 event.code = code;
-                ordered.push_back({code, key_name(event), 0});
+                ordered.push_back({code, key_name(event), 0, press_counts[code]});
             }
         }
     }
     void render(QPainter &painter) override
     {
         painter.setFont(font());
-        const int row_height = std::max(1, (height - padding * 2) / maximum);
         const int start = std::max(0, static_cast<int>(ordered.size()) - maximum);
+        const int visible = static_cast<int>(ordered.size()) - start;
+        const int gap = 2;
+        const int key_width = row_layout ? std::max(1, (width - padding * 2 - gap * (visible - 1)) / std::max(1, visible))
+                                         : std::max(1, width - padding * 2);
+        const int key_height = row_layout ? std::max(1, height - padding * 2)
+                                          : std::max(1, (height - padding * 2) / maximum - gap);
         const uint64_t now = os_gettime_ns();
         for (int index = start; index < static_cast<int>(ordered.size()); ++index) {
-            const QRect row(padding, padding + (index - start) * row_height, width - padding * 2, row_height - 2);
+            const int position = index - start;
+            const QRect row(row_layout ? padding + position * (key_width + gap) : padding,
+                            row_layout ? padding : padding + position * (key_height + gap), key_width, key_height);
             const auto &key = ordered[index];
             const int alpha = key.fade_until > now && fade_duration_ns > 0
                                   ? static_cast<int>(255 * static_cast<double>(key.fade_until - now) / fade_duration_ns)
@@ -333,7 +341,7 @@ public:
             painter.setPen(Qt::NoPen);
             painter.drawRoundedRect(row, 6, 6);
             painter.setPen(text);
-            painter.drawText(row, Qt::AlignCenter, key.label);
+            painter.drawText(row, Qt::AlignCenter, QString("%1\n%2").arg(key.label).arg(key.press_count));
         }
     }
 
@@ -342,12 +350,15 @@ private:
         uint16_t code;
         QString label;
         uint64_t fade_until;
+        uint64_t press_count;
     };
     int maximum = 8;
     uint64_t fade_duration_ns = 300ULL * 1000 * 1000;
     QColor active_color{37, 99, 235};
     std::unordered_map<uint16_t, bool> held;
+    std::unordered_map<uint16_t, uint64_t> press_counts;
     std::vector<active_key> ordered;
+    bool row_layout{};
 };
 
 class mouse_activity_source final : public activity_source {
@@ -679,12 +690,18 @@ public:
             this);
     }
     ~statistics_source() override { obs_hotkey_unregister(hotkey); }
+    void update(obs_data_t *settings) override
+    {
+        activity_source::update(settings);
+        mouse_dpi = std::max<int64_t>(1, obs_data_get_int(settings, "statistics.mouse_dpi"));
+    }
     void on_event(const input_data::trace_event &event) override
     {
         if (event.type == EVENT_KEY_PRESSED) {
             if (!held_keys[event.code]) {
                 held_keys[event.code] = true;
                 keys.push_back(event.time_ns);
+                ++total_keys;
             }
         } else if (event.type == EVENT_KEY_RELEASED) {
             held_keys[event.code] = false;
@@ -692,6 +709,7 @@ public:
             if (!held_buttons[event.code]) {
                 held_buttons[event.code] = true;
                 clicks.push_back(event.time_ns);
+                ++total_clicks;
             }
         } else if (event.type == EVENT_MOUSE_RELEASED) {
             held_buttons[event.code] = false;
@@ -724,11 +742,16 @@ public:
     {
         painter.setFont(font());
         painter.setPen(text_color);
-        const QString text = QString("KPM: %1\nCPM: %2\nAPM: %3\nDistance: %4 px")
+        const QString text = QString("KPM: %1  Total keys: %2\nCPM: %3  Total clicks: %4\nAPM: %5  Total actions: %6\n"
+                                     "Distance: %7 px (%8 in)")
                                  .arg(keys.size())
+                                 .arg(total_keys)
                                  .arg(clicks.size())
+                                 .arg(total_clicks)
                                  .arg(keys.size() + clicks.size())
-                                 .arg(distance, 0, 'f', 0);
+                                 .arg(total_keys + total_clicks)
+                                 .arg(distance, 0, 'f', 0)
+                                 .arg(distance / mouse_dpi, 0, 'f', 2);
         painter.drawText(QRect(padding, padding, width - padding * 2, height - padding * 2),
                          Qt::AlignLeft | Qt::AlignVCenter, text);
     }
@@ -737,6 +760,8 @@ public:
         keys.clear();
         clicks.clear();
         distance = 0;
+        total_keys = 0;
+        total_clicks = 0;
         last_motion.reset();
     }
 
@@ -745,6 +770,8 @@ private:
     std::deque<uint64_t> keys, clicks;
     std::unordered_map<uint16_t, bool> held_keys, held_buttons;
     double distance{};
+    uint64_t total_keys{}, total_clicks{};
+    int64_t mouse_dpi{800};
     std::optional<input_data::trace_event> last_motion;
 };
 
@@ -800,6 +827,7 @@ template<typename T> void register_source(const char *id, const char *name, obs_
         obs_data_set_default_int(settings, "activity.text_color", 0xffffff);
         if constexpr (std::is_same_v<T, live_keys_source>) {
             obs_data_set_default_int(settings, "live_keys.maximum", 8);
+            obs_data_set_default_bool(settings, "live_keys.row_layout", false);
             obs_data_set_default_int(settings, "live_keys.fade_ms", 300);
             obs_data_set_default_int(settings, "live_keys.color", 0xeb6325);
         } else if constexpr (std::is_same_v<T, mouse_activity_source>) {
@@ -811,6 +839,8 @@ template<typename T> void register_source(const char *id, const char *name, obs_
             obs_data_set_default_int(settings, "mouse_activity.trail_ms", 1500);
             obs_data_set_default_string(settings, "mouse_activity.heatmap_gradient", "spectrum");
             obs_data_set_default_int(settings, "mouse_activity.color", 0xeb6325);
+        } else if constexpr (std::is_same_v<T, statistics_source>) {
+            obs_data_set_default_int(settings, "statistics.mouse_dpi", 800);
         }
     };
     obs_register_source(&info);
@@ -820,6 +850,7 @@ obs_properties_t *keys_properties(void *)
     auto *p = obs_properties_create();
     add_common_properties(p);
     obs_properties_add_int(p, "live_keys.maximum", obs_module_text("LiveKeys.Maximum"), 1, 64, 1);
+    obs_properties_add_bool(p, "live_keys.row_layout", obs_module_text("LiveKeys.RowLayout"));
     obs_properties_add_int_slider(p, "live_keys.fade_ms", obs_module_text("LiveKeys.FadeDuration"), 0, 5000, 10);
     obs_properties_add_color(p, "live_keys.color", obs_module_text("Activity.ActiveColor"));
     return p;
@@ -868,6 +899,7 @@ obs_properties_t *statistics_properties(void *)
 {
     auto *p = obs_properties_create();
     add_common_properties(p);
+    obs_properties_add_int(p, "statistics.mouse_dpi", obs_module_text("Statistics.MouseDPI"), 1, 100000, 1);
     return p;
 }
 } // namespace

@@ -62,7 +62,22 @@ constexpr bundled_preset bundled_presets[] = {
 QColor color_from_obs(uint32_t color)
 {
     return QColor(static_cast<int>(color & 0xff), static_cast<int>((color >> 8) & 0xff),
-                  static_cast<int>((color >> 16) & 0xff));
+                  static_cast<int>((color >> 16) & 0xff), static_cast<int>((color >> 24) & 0xff));
+}
+
+void migrate_legacy_colors(obs_data_t *settings)
+{
+    if (obs_data_get_bool(settings, "io.colors_with_alpha"))
+        return;
+    const char *color_keys[] = {S_PROCEDURAL_FILL_COLOR,         S_PROCEDURAL_PRESSED_COLOR,
+                                S_PROCEDURAL_BORDER_COLOR,       S_PROCEDURAL_TEXT_COLOR,
+                                S_PROCEDURAL_MOUSE_FILL_COLOR,   S_PROCEDURAL_MOUSE_PRESSED_COLOR,
+                                S_PROCEDURAL_MOUSE_BORDER_COLOR, S_PROCEDURAL_MOUSE_TEXT_COLOR};
+    for (const char *color_key : color_keys) {
+        const uint32_t color = static_cast<uint32_t>(obs_data_get_int(settings, color_key));
+        obs_data_set_int(settings, color_key, color | 0xff000000);
+    }
+    obs_data_set_bool(settings, "io.colors_with_alpha", true);
 }
 
 const bundled_preset *find_bundled_preset(const char *id)
@@ -549,6 +564,7 @@ input_source::~input_source() = default;
 
 inline void input_source::update(obs_data_t *settings)
 {
+    migrate_legacy_colors(settings);
     m_procedural_keyboard->update(settings);
     m_procedural_mouse->update(settings);
     if (m_procedural_mouse->enabled()) {
@@ -752,10 +768,10 @@ obs_properties_t *get_properties_for_overlay(void *data)
     obs_properties_add_int_slider(props, S_PROCEDURAL_RADIUS, T_PROCEDURAL_RADIUS, 0, 80, 1);
     obs_properties_add_font(props, S_PROCEDURAL_FONT, T_PROCEDURAL_FONT);
     obs_properties_add_int_slider(props, S_PROCEDURAL_FONT_SIZE, T_PROCEDURAL_FONT_SIZE, 10, 96, 1);
-    obs_properties_add_color(props, S_PROCEDURAL_FILL_COLOR, T_PROCEDURAL_FILL_COLOR);
-    obs_properties_add_color(props, S_PROCEDURAL_PRESSED_COLOR, T_PROCEDURAL_PRESSED_COLOR);
-    obs_properties_add_color(props, S_PROCEDURAL_BORDER_COLOR, T_PROCEDURAL_BORDER_COLOR);
-    obs_properties_add_color(props, S_PROCEDURAL_TEXT_COLOR, T_PROCEDURAL_TEXT_COLOR);
+    obs_properties_add_color_alpha(props, S_PROCEDURAL_FILL_COLOR, T_PROCEDURAL_FILL_COLOR);
+    obs_properties_add_color_alpha(props, S_PROCEDURAL_PRESSED_COLOR, T_PROCEDURAL_PRESSED_COLOR);
+    obs_properties_add_color_alpha(props, S_PROCEDURAL_BORDER_COLOR, T_PROCEDURAL_BORDER_COLOR);
+    obs_properties_add_color_alpha(props, S_PROCEDURAL_TEXT_COLOR, T_PROCEDURAL_TEXT_COLOR);
     obs_properties_add_text(props, S_PROCEDURAL_LAYOUT, T_PROCEDURAL_LAYOUT, OBS_TEXT_MULTILINE);
 
     obs_properties_add_bool(props, S_PROCEDURAL_MOUSE_ENABLED, T_PROCEDURAL_MOUSE_ENABLED);
@@ -765,10 +781,10 @@ obs_properties_t *get_properties_for_overlay(void *data)
     obs_properties_add_int_slider(props, S_PROCEDURAL_MOUSE_RADIUS, T_PROCEDURAL_MOUSE_RADIUS, 0, 100, 1);
     obs_properties_add_font(props, S_PROCEDURAL_MOUSE_FONT, T_PROCEDURAL_MOUSE_FONT);
     obs_properties_add_int_slider(props, S_PROCEDURAL_MOUSE_FONT_SIZE, T_PROCEDURAL_MOUSE_FONT_SIZE, 10, 96, 1);
-    obs_properties_add_color(props, S_PROCEDURAL_MOUSE_FILL_COLOR, T_PROCEDURAL_MOUSE_FILL_COLOR);
-    obs_properties_add_color(props, S_PROCEDURAL_MOUSE_PRESSED_COLOR, T_PROCEDURAL_MOUSE_PRESSED_COLOR);
-    obs_properties_add_color(props, S_PROCEDURAL_MOUSE_BORDER_COLOR, T_PROCEDURAL_MOUSE_BORDER_COLOR);
-    obs_properties_add_color(props, S_PROCEDURAL_MOUSE_TEXT_COLOR, T_PROCEDURAL_MOUSE_TEXT_COLOR);
+    obs_properties_add_color_alpha(props, S_PROCEDURAL_MOUSE_FILL_COLOR, T_PROCEDURAL_MOUSE_FILL_COLOR);
+    obs_properties_add_color_alpha(props, S_PROCEDURAL_MOUSE_PRESSED_COLOR, T_PROCEDURAL_MOUSE_PRESSED_COLOR);
+    obs_properties_add_color_alpha(props, S_PROCEDURAL_MOUSE_BORDER_COLOR, T_PROCEDURAL_MOUSE_BORDER_COLOR);
+    obs_properties_add_color_alpha(props, S_PROCEDURAL_MOUSE_TEXT_COLOR, T_PROCEDURAL_MOUSE_TEXT_COLOR);
     obs_properties_add_text(props, S_PROCEDURAL_MOUSE_LEFT_LABEL, T_PROCEDURAL_MOUSE_LEFT_LABEL, OBS_TEXT_DEFAULT);
     obs_properties_add_text(props, S_PROCEDURAL_MOUSE_RIGHT_LABEL, T_PROCEDURAL_MOUSE_RIGHT_LABEL, OBS_TEXT_DEFAULT);
     obs_properties_add_text(props, S_PROCEDURAL_MOUSE_MIDDLE_LABEL, T_PROCEDURAL_MOUSE_MIDDLE_LABEL, OBS_TEXT_DEFAULT);
@@ -853,10 +869,10 @@ void register_overlay_source()
         obs_data_set_default_int(settings, S_PROCEDURAL_GAP, 8);
         obs_data_set_default_int(settings, S_PROCEDURAL_RADIUS, 12);
         obs_data_set_default_int(settings, S_PROCEDURAL_FONT_SIZE, 28);
-        obs_data_set_default_int(settings, S_PROCEDURAL_FILL_COLOR, 0x392923);
-        obs_data_set_default_int(settings, S_PROCEDURAL_PRESSED_COLOR, 0xEB6325);
-        obs_data_set_default_int(settings, S_PROCEDURAL_BORDER_COLOR, 0xB8A394);
-        obs_data_set_default_int(settings, S_PROCEDURAL_TEXT_COLOR, 0xFFFFFF);
+        obs_data_set_default_int(settings, S_PROCEDURAL_FILL_COLOR, 0xFF392923);
+        obs_data_set_default_int(settings, S_PROCEDURAL_PRESSED_COLOR, 0xFFEB6325);
+        obs_data_set_default_int(settings, S_PROCEDURAL_BORDER_COLOR, 0xFFB8A394);
+        obs_data_set_default_int(settings, S_PROCEDURAL_TEXT_COLOR, 0xFFFFFFFF);
         obs_data_set_default_string(settings, S_PROCEDURAL_LAYOUT, " W     \nASD[LEFT][DOWN][RIGHT]");
         obs_data_set_default_bool(settings, S_PROCEDURAL_MOUSE_ENABLED, false);
         obs_data_set_default_int(settings, S_PROCEDURAL_MOUSE_WIDTH, 220);
@@ -864,10 +880,10 @@ void register_overlay_source()
         obs_data_set_default_int(settings, S_PROCEDURAL_MOUSE_GAP, 8);
         obs_data_set_default_int(settings, S_PROCEDURAL_MOUSE_RADIUS, 16);
         obs_data_set_default_int(settings, S_PROCEDURAL_MOUSE_FONT_SIZE, 24);
-        obs_data_set_default_int(settings, S_PROCEDURAL_MOUSE_FILL_COLOR, 0x392923);
-        obs_data_set_default_int(settings, S_PROCEDURAL_MOUSE_PRESSED_COLOR, 0xEB6325);
-        obs_data_set_default_int(settings, S_PROCEDURAL_MOUSE_BORDER_COLOR, 0xB8A394);
-        obs_data_set_default_int(settings, S_PROCEDURAL_MOUSE_TEXT_COLOR, 0xFFFFFF);
+        obs_data_set_default_int(settings, S_PROCEDURAL_MOUSE_FILL_COLOR, 0xFF392923);
+        obs_data_set_default_int(settings, S_PROCEDURAL_MOUSE_PRESSED_COLOR, 0xFFEB6325);
+        obs_data_set_default_int(settings, S_PROCEDURAL_MOUSE_BORDER_COLOR, 0xFFB8A394);
+        obs_data_set_default_int(settings, S_PROCEDURAL_MOUSE_TEXT_COLOR, 0xFFFFFFFF);
         obs_data_set_default_string(settings, S_PROCEDURAL_MOUSE_LEFT_LABEL, "LMB");
         obs_data_set_default_string(settings, S_PROCEDURAL_MOUSE_RIGHT_LABEL, "RMB");
         obs_data_set_default_string(settings, S_PROCEDURAL_MOUSE_MIDDLE_LABEL, "MMB");

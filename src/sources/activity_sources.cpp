@@ -153,6 +153,16 @@ QString key_name(const input_data::trace_event &event)
 {
     if (event.keychar >= 32 && event.keychar < 127)
         return QString(QChar(event.keychar)).toUpper();
+    if (event.code >= VC_A && event.code <= VC_Z)
+        return QString(QChar('A' + event.code - VC_A));
+    if (event.code >= VC_0 && event.code <= VC_9)
+        return QString(QChar('0' + event.code - VC_0));
+    if (event.code >= VC_F1 && event.code <= VC_F12)
+        return QString("F%1").arg(event.code - VC_F1 + 1);
+    if (event.code >= VC_F13 && event.code <= VC_F24)
+        return QString("F%1").arg(event.code - VC_F13 + 13);
+    if (event.code >= VC_KP_0 && event.code <= VC_KP_9)
+        return QString("Num %1").arg(event.code - VC_KP_0);
     switch (event.code) {
     case VC_SHIFT_L:
     case VC_SHIFT_R:
@@ -176,8 +186,72 @@ QString key_name(const input_data::trace_event &event)
         return "Backspace";
     case VC_TAB:
         return "Tab";
+    case VC_CAPS_LOCK:
+        return "Caps Lock";
+    case VC_MINUS:
+        return "-";
+    case VC_EQUALS:
+        return "=";
+    case VC_OPEN_BRACKET:
+        return "[";
+    case VC_CLOSE_BRACKET:
+        return "]";
+    case VC_BACK_SLASH:
+        return "\\";
+    case VC_SEMICOLON:
+        return ";";
+    case VC_QUOTE:
+        return "'";
+    case VC_COMMA:
+        return ",";
+    case VC_PERIOD:
+        return ".";
+    case VC_SLASH:
+        return "/";
+    case VC_BACK_QUOTE:
+        return "`";
+    case VC_UP:
+        return "Up";
+    case VC_DOWN:
+        return "Down";
+    case VC_LEFT:
+        return "Left";
+    case VC_RIGHT:
+        return "Right";
+    case VC_HOME:
+        return "Home";
+    case VC_END:
+        return "End";
+    case VC_PAGE_UP:
+        return "Page Up";
+    case VC_PAGE_DOWN:
+        return "Page Down";
+    case VC_INSERT:
+        return "Insert";
+    case VC_DELETE:
+        return "Delete";
+    case VC_PRINT_SCREEN:
+        return "Print Screen";
+    case VC_SCROLL_LOCK:
+        return "Scroll Lock";
+    case VC_PAUSE:
+        return "Pause";
+    case VC_NUM_LOCK:
+        return "Num Lock";
+    case VC_KP_DIVIDE:
+        return "Num /";
+    case VC_KP_MULTIPLY:
+        return "Num *";
+    case VC_KP_SUBTRACT:
+        return "Num -";
+    case VC_KP_ADD:
+        return "Num +";
+    case VC_KP_DECIMAL:
+        return "Num .";
+    case VC_KP_ENTER:
+        return "Num Enter";
     default:
-        return QString("Key %1").arg(event.code);
+        return QString("Unknown key");
     }
 }
 
@@ -188,6 +262,8 @@ public:
     {
         activity_source::update(settings);
         maximum = std::max(1, static_cast<int>(obs_data_get_int(settings, "live_keys.maximum")));
+        fade_duration_ns =
+            static_cast<uint64_t>(std::max<int64_t>(0, obs_data_get_int(settings, "live_keys.fade_ms"))) * 1000 * 1000;
         active_color = obs_color(static_cast<uint32_t>(obs_data_get_int(settings, "live_keys.color")));
     }
     void on_event(const input_data::trace_event &event) override
@@ -195,24 +271,31 @@ public:
         if (event.type == EVENT_KEY_PRESSED && !held[event.code]) {
             held[event.code] = true;
             ordered.erase(std::remove_if(ordered.begin(), ordered.end(),
-                                         [&event](const auto &key) { return key.first == event.code; }),
+                                         [&event](const auto &key) { return key.code == event.code; }),
                           ordered.end());
-            ordered.emplace_back(event.code, key_name(event));
+            ordered.push_back({event.code, key_name(event), 0});
         } else if (event.type == EVENT_KEY_RELEASED) {
             held[event.code] = false;
-            ordered.erase(std::remove_if(ordered.begin(), ordered.end(),
-                                         [&event](const auto &key) { return key.first == event.code; }),
-                          ordered.end());
+            for (auto &key : ordered) {
+                if (key.code == event.code)
+                    key.fade_until = event.time_ns + fade_duration_ns;
+            }
         }
     }
     void on_snapshot(const input_data::button_map<uint16_t> &keyboard,
                      const input_data::button_map<uint16_t> &) override
     {
+        const uint64_t now = os_gettime_ns();
         for (auto it = ordered.begin(); it != ordered.end();) {
-            const auto pressed = keyboard.find(it->first);
+            const auto pressed = keyboard.find(it->code);
             if (pressed == keyboard.end() || !pressed->second) {
-                held[it->first] = false;
-                it = ordered.erase(it);
+                held[it->code] = false;
+                if (it->fade_until == 0)
+                    it->fade_until = now + fade_duration_ns;
+                if (it->fade_until <= now)
+                    it = ordered.erase(it);
+                else
+                    ++it;
             } else {
                 ++it;
             }
@@ -222,7 +305,7 @@ public:
                 held[code] = true;
                 input_data::trace_event event{};
                 event.code = code;
-                ordered.emplace_back(code, key_name(event));
+                ordered.push_back({code, key_name(event), 0});
             }
         }
     }
@@ -231,21 +314,36 @@ public:
         painter.setFont(font());
         const int row_height = std::max(1, (height - padding * 2) / maximum);
         const int start = std::max(0, static_cast<int>(ordered.size()) - maximum);
+        const uint64_t now = os_gettime_ns();
         for (int index = start; index < static_cast<int>(ordered.size()); ++index) {
             const QRect row(padding, padding + (index - start) * row_height, width - padding * 2, row_height - 2);
-            painter.setBrush(active_color);
+            const auto &key = ordered[index];
+            const int alpha = key.fade_until > now && fade_duration_ns > 0
+                                  ? static_cast<int>(255 * static_cast<double>(key.fade_until - now) / fade_duration_ns)
+                                  : (key.fade_until ? 0 : 255);
+            QColor fill = active_color;
+            fill.setAlpha(std::clamp(alpha, 0, 255));
+            QColor text = text_color;
+            text.setAlpha(std::clamp(alpha, 0, 255));
+            painter.setBrush(fill);
             painter.setPen(Qt::NoPen);
             painter.drawRoundedRect(row, 6, 6);
-            painter.setPen(text_color);
-            painter.drawText(row, Qt::AlignCenter, ordered[index].second);
+            painter.setPen(text);
+            painter.drawText(row, Qt::AlignCenter, key.label);
         }
     }
 
 private:
+    struct active_key {
+        uint16_t code;
+        QString label;
+        uint64_t fade_until;
+    };
     int maximum = 8;
+    uint64_t fade_duration_ns = 300ULL * 1000 * 1000;
     QColor active_color{37, 99, 235};
     std::unordered_map<uint16_t, bool> held;
-    std::vector<std::pair<uint16_t, QString>> ordered;
+    std::vector<active_key> ordered;
 };
 
 class mouse_activity_source final : public activity_source {
@@ -477,6 +575,7 @@ template<typename T> void register_source(const char *id, const char *name, obs_
         obs_data_set_default_int(settings, "activity.text_color", 0xffffff);
         if constexpr (std::is_same_v<T, live_keys_source>) {
             obs_data_set_default_int(settings, "live_keys.maximum", 8);
+            obs_data_set_default_int(settings, "live_keys.fade_ms", 300);
             obs_data_set_default_int(settings, "live_keys.color", 0xeb6325);
         } else if constexpr (std::is_same_v<T, mouse_activity_source>) {
             obs_data_set_default_string(settings, "mouse_activity.left_label", "LMB");
@@ -492,6 +591,7 @@ obs_properties_t *keys_properties(void *)
     auto *p = obs_properties_create();
     add_common_properties(p);
     obs_properties_add_int(p, "live_keys.maximum", obs_module_text("LiveKeys.Maximum"), 1, 64, 1);
+    obs_properties_add_int_slider(p, "live_keys.fade_ms", obs_module_text("LiveKeys.FadeDuration"), 0, 5000, 10);
     obs_properties_add_color(p, "live_keys.color", obs_module_text("Activity.ActiveColor"));
     return p;
 }
